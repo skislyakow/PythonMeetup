@@ -1,15 +1,13 @@
-from peewee import AutoField, CharField, DateTimeField, ForeignKeyField
-
-from bot.models import db
-from bot.models.user import User
+from django.db import models
 
 
-class Event(db.Model):
-    id = AutoField()
-    speaker = ForeignKeyField(User, backref="events")
-    title = CharField(max_length=300)
-    start_time = DateTimeField()
-    end_time = DateTimeField()
+class Event(models.Model):
+    speaker = models.ForeignKey(
+        "TelegramUser", on_delete=models.CASCADE, related_name="events"
+    )
+    title = models.CharField(max_length=300)
+    start_time = models.DateTimeField()
+    end_time = models.DateTimeField()
 
     class Meta:
-        database = db
+        db_table = "events"
