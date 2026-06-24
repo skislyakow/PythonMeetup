@@ -8,6 +8,7 @@ class TelegramUser(models.Model):
         ("organizer", "Организатор"),
     ]
     user_id = models.IntegerField(primary_key=True)
+    username = models.CharField(max_length=100, default="", blank=True)
     role = models.CharField(
         max_length=20, choices=ROLE_CHOICES, default="guest"
     )
