@@ -12,8 +12,9 @@ python -m venv venv
 # Linux/macOS: source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env   # заполнить BOT_TOKEN и ORGANIZER_IDS
-python manage.py migrate   # создать таблицы в SQLite
-python -m bot.main         # запустить бота
+python manage.py migrate       # создать таблицы в SQLite
+python -m bot.seed            # загрузить тестовые данные (опционально)
+python -m bot.main            # запустить бота
 
 > Каждый разработчик создаёт **своего тестового бота** через [@BotFather](https://t.me/BotFather) (`/newbot`) и вписывает свой токен в `.env`. Так никто не мешает друг другу.
 > В `ORGANIZER_IDS` каждый пишет свой Telegram ID — бот при старте сделает вас организатором.
