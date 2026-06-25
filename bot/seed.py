@@ -51,6 +51,7 @@ def seed():
             "title": "Async Python: от основ до продакшена",
             "start_time": _dt(14, 0),
             "end_time": _dt(15, 0),
+            "is_active": True,
         },
     )
     Event.objects.update_or_create(
@@ -60,6 +61,7 @@ def seed():
             "title": "Django ORM: советы бывалого",
             "start_time": _dt(15, 0),
             "end_time": _dt(16, 0),
+            "is_active": True,
         },
     )
 

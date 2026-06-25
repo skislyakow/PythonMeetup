@@ -7,6 +7,7 @@ django.setup()
 from telegram.ext import ApplicationBuilder
 from bot.config import BOT_TOKEN, ORGANIZER_IDS
 from bot.handlers.organizer import organizer_handlers
+from bot.handlers.guest import guest_handlers
 from bot.models.telegram_user import TelegramUser
 
 
@@ -17,8 +18,8 @@ def main() -> None:
     # from bot.handlers.guest import handlers as guest_handlers
     # from bot.handlers.speaker import handlers as speaker_handlers
     # from bot.handlers.organizer import handlers as organizer_handlers
-    # for h in guest_handlers + speaker_handlers + organizer_handlers:
-    #     app.add_handler(h)
+    for h in guest_handlers:
+        app.add_handler(h)
     for h in organizer_handlers:
         app.add_handler(h)
 
