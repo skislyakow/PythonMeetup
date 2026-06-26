@@ -1,3 +1,6 @@
+from functools import wraps
+import logging
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     CommandHandler,
@@ -8,6 +11,7 @@ from telegram.ext import (
     ContextTypes,
 )
 from asgiref.sync import sync_to_async
+from datetime import datetime
 from django.utils import timezone
 
 from bot.services.auth import is_organizer
@@ -17,8 +21,21 @@ from bot.services import db_direct
 
 TITLE, START_TIME, END_TIME, SPEAKER, CONFIRM = range(5)
 
+create_event_async = sync_to_async(db_direct.create_event)
+logger = logging.getLogger(__name__)
 
-# --- sync helpers ---
+
+def organizer_required(func):
+    @wraps(func)
+    async def wrapper(update, context, *args, **kwargs):
+        if not update.message or not update.effective_user:
+            return
+        if not await is_organizer(update.effective_user.id):
+            await update.message.reply_text("Нет доступа")
+            return
+        return await func(update, context, *args, **kwargs)
+
+    return wrapper
 
 
 @sync_to_async
@@ -35,27 +52,15 @@ def find_speaker_by_username(username):
     return TelegramUser.objects.filter(username=username).first()
 
 
-# --- admin_panel ---
-
-
+@organizer_required
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.effective_user:
-        return
-    if not await is_organizer(update.effective_user.id):
-        await update.message.reply_text("Нет доступа")
-        return
+    assert update.message is not None
     await update.message.reply_text("Ты организатор!")
 
 
-# --- add_speaker ---
-
-
+@organizer_required
 async def add_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.effective_user:
-        return
-    if not await is_organizer(update.effective_user.id):
-        await update.message.reply_text("Нет доступа")
-        return
+    assert update.message is not None
     args = context.args
     if not args:
         await update.message.reply_text(
@@ -75,18 +80,23 @@ async def add_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- set_schedule (ConversationHandler) ---
 
 
+def parse_time(text: str) -> datetime | None:
+    try:
+        hour, minute = map(int, text.split(":"))
+        now = timezone.localtime()
+        return now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    except (ValueError, AttributeError):
+        return None
+
+
 @sync_to_async
 def get_all_users():
     return list(TelegramUser.objects.all())
 
 
+@organizer_required
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.effective_user:
-        return
-    if not await is_organizer(update.effective_user.id):
-        await update.message.reply_text("Нет доступа")
-        return
-
+    assert update.message is not None
     text = " ".join(context.args or [])
     if not text:
         await update.message.reply_text("Использование: /broadcast <текст>")
@@ -98,22 +108,19 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(chat_id=u.user_id, text=text)
             sent += 1
-        except Exception:
-            pass  # пользователь заблокировал бота
+        except Exception as e:
+            logger.warning("Failed to send to %s: %s", u.user_id, e)
 
     await update.message.reply_text(
         f"Сообщение отправлено {sent} из {len(users)} пользователям"
     )
 
 
+@organizer_required
 async def set_schedule_start(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
-    if not update.message or not update.effective_user:
-        return ConversationHandler.END
-    if not await is_organizer(update.effective_user.id):
-        await update.message.reply_text("Нет доступа")
-        return ConversationHandler.END
+    assert update.message is not None
     await update.message.reply_text("Название доклада?")
     return TITLE
 
@@ -130,13 +137,8 @@ async def get_start_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or context.user_data is None:
         return START_TIME
     text = (update.message.text or "").strip()
-    try:
-        hour, minute = map(int, text.split(":"))
-        now = timezone.localtime()
-        start_dt = now.replace(
-            hour=hour, minute=minute, second=0, microsecond=0
-        )
-    except (ValueError, AttributeError):
+    start_dt = parse_time(text)
+    if start_dt is None:
         await update.message.reply_text(
             "Неверный формат. Напиши время так: 14:00"
         )
@@ -150,11 +152,8 @@ async def get_end_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or context.user_data is None:
         return END_TIME
     text = (update.message.text or "").strip()
-    try:
-        hour, minute = map(int, text.split(":"))
-        now = timezone.localtime()
-        end_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    except (ValueError, AttributeError):
+    end_dt = parse_time(text)
+    if end_dt is None:
         await update.message.reply_text(
             "Неверный формат. Напиши время так: 15:00"
         )
@@ -195,8 +194,7 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return CONFIRM
     text = (update.message.text or "").strip().lower()
     if text == "да":
-        create = sync_to_async(db_direct.create_event)
-        await create(
+        await create_event_async(
             context.user_data["speaker_id"],
             context.user_data["title"],
             context.user_data["start_time"],
@@ -225,7 +223,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @sync_to_async
 def get_all_events_with_speakers():
-    return list(Event.objects.all().select_related("speaker").order_by("start_time"))
+    return list(
+        Event.objects.all().select_related("speaker").order_by("start_time")
+    )
 
 
 @sync_to_async
@@ -240,13 +240,9 @@ def deactivate_all_events():
     Event.objects.filter(is_active=True).update(is_active=False)
 
 
+@organizer_required
 async def activate_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.effective_user:
-        return
-    if not await is_organizer(update.effective_user.id):
-        await update.message.reply_text("Нет доступа")
-        return
-
+    assert update.message is not None
     events = await get_all_events_with_speakers()
     if not events:
         await update.message.reply_text("Нет докладов в программе")
@@ -254,8 +250,7 @@ async def activate_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = ["Программа:\n"]
 
-    has_active = any(e.is_active for e in events)
-    if not has_active:
+    if not any(e.is_active for e in events):
         lines.append("⏸ Никто не выступает\n")
 
     buttons = []
@@ -266,19 +261,23 @@ async def activate_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{marker} {e.start_time.strftime('%H:%M')} — {e.speaker.full_name}: {e.title}{status}"
         )
         if not e.is_active:
-            buttons.append([
-                InlineKeyboardButton(
-                    f"Сделать активным: {e.title[:30]}",
-                    callback_data=f"activate_event_{e.id}",
-                )
-            ])
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"Сделать активным: {e.title[:30]}",
+                        callback_data=f"activate_event_{e.id}",
+                    )
+                ]
+            )
         else:
-            buttons.append([
-                InlineKeyboardButton(
-                    f"Завершить: {e.title[:30]}",
-                    callback_data=f"deactivate_{e.id}",
-                )
-            ])
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"Завершить: {e.title[:30]}",
+                        callback_data=f"deactivate_{e.id}",
+                    )
+                ]
+            )
 
     await update.message.reply_text(
         "\n".join(lines),
@@ -286,7 +285,9 @@ async def activate_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def set_active_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def set_active_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
     query = update.callback_query
     assert query is not None
     await query.answer()
@@ -298,7 +299,6 @@ async def set_active_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     assert query.data is not None
     if query.data.startswith("deactivate_"):
-        event_id = int(query.data.split("_")[1])
         await deactivate_all_events()
         await query.edit_message_text("⏸ Доклад завершён")
         return
@@ -331,6 +331,8 @@ organizer_handlers = [
     CommandHandler("add_speaker", add_speaker),
     CommandHandler("broadcast", broadcast),
     CommandHandler("activate", activate_speaker),
-    CallbackQueryHandler(set_active_callback, pattern="^(activate_event_|deactivate_)"),
+    CallbackQueryHandler(
+        set_active_callback, pattern="^(activate_event_|deactivate_)"
+    ),
     conv_handler,
 ]
