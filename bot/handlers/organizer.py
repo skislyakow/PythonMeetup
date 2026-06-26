@@ -39,15 +39,6 @@ def organizer_required(func):
 
 
 @sync_to_async
-def find_and_set_speaker(username):
-    user = TelegramUser.objects.filter(username=username).first()
-    if user:
-        user.role = "speaker"
-        user.save()
-    return user
-
-
-@sync_to_async
 def find_speaker_by_username(username):
     return TelegramUser.objects.filter(username=username).first()
 
@@ -56,28 +47,6 @@ def find_speaker_by_username(username):
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.message is not None
     await update.message.reply_text("Ты организатор!")
-
-
-@organizer_required
-async def add_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    assert update.message is not None
-    args = context.args
-    if not args:
-        await update.message.reply_text(
-            "Использование: /add_speaker @username"
-        )
-        return
-    username = args[0].lstrip("@")
-    user = await find_and_set_speaker(username)
-    if not user:
-        await update.message.reply_text(
-            f"Пользователь @{username} не найден. Нужно сначала написать боту /start"
-        )
-        return
-    await update.message.reply_text(f"@{username} теперь спикер!")
-
-
-# --- set_schedule (ConversationHandler) ---
 
 
 def parse_time(text: str) -> datetime | None:
@@ -179,10 +148,23 @@ async def get_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return SPEAKER
     if speaker.role != "speaker":
-        await update.message.reply_text(
-            f"@{username} не является спикером. Сначала назначь через /add_speaker @{username}"
+        speaker.role = "speaker"
+        await sync_to_async(speaker.save)()
+
+    start_str = context.user_data["start_time"].strftime("%H:%M")
+    end_str = context.user_data["end_time"].strftime("%H:%M")
+    try:
+        await context.bot.send_message(
+            chat_id=speaker.user_id,
+            text=(
+                f"🎤 Вы назначены докладчиком на Python Meetup!\n"
+                f"Тема доклада: {context.user_data['title']}\n"
+                f"Начало: {start_str}\n"
+                f"Конец: {end_str}"
+            ),
         )
-        return SPEAKER
+    except Exception:
+        logger.warning("Не удалось уведомить спикера %s", speaker.user_id)
     context.user_data["speaker_id"] = speaker.user_id
     title = context.user_data["title"]
     await update.message.reply_text(f"Добавить доклад «{title}»? (да/нет)")
@@ -216,9 +198,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Отменено.")
     context.user_data.clear()
     return ConversationHandler.END
-
-
-# --- activate speaker ---
 
 
 @sync_to_async
@@ -328,7 +307,6 @@ conv_handler = ConversationHandler(
 
 organizer_handlers = [
     CommandHandler("admin", admin_panel),
-    CommandHandler("add_speaker", add_speaker),
     CommandHandler("broadcast", broadcast),
     CommandHandler("activate", activate_speaker),
     CallbackQueryHandler(
