@@ -78,6 +78,36 @@ async def add_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- set_schedule (ConversationHandler) ---
 
 
+@sync_to_async
+def get_all_users():
+    return list(TelegramUser.objects.all())
+
+
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+    if not await is_organizer(update.effective_user.id):
+        return
+
+    text = " ".join(context.args)
+    if not text:
+        await update.message.reply_text("Использование: /broadcast <текст>")
+        return
+
+    users = await get_all_users()
+    sent = 0
+    for u in users:
+        try:
+            await context.bot.send_message(chat_id=u.user_id, text=text)
+            sent += 1
+        except Exception:
+            pass  # пользователь заблокировал бота
+
+    await update.message.reply_text(
+        f"Сообщение отправлено {sent} из {len(users)} пользователям"
+    )
+
+
 async def set_schedule_start(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
@@ -199,5 +229,6 @@ conv_handler = ConversationHandler(
 organizer_handlers = [
     CommandHandler("admin", admin_panel),
     CommandHandler("add_speaker", add_speaker),
+    CommandHandler("broadcast", broadcast),
     conv_handler,
 ]
