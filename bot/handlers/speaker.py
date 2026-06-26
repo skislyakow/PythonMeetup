@@ -128,7 +128,6 @@ async def questions(update, context):
 
 
 async def show_question(query, question, index, total):
-    # Все данные уже загружены через select_related в get_question
     from_user_name = question.from_user.full_name if question.from_user else "Аноним"
     
     text = (
