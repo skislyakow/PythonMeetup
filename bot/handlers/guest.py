@@ -16,6 +16,8 @@ from django.utils import timezone
 from bot.models.telegram_user import TelegramUser
 from bot.models.event import Event
 from bot.models.question import Question
+from bot.services.auth import is_organizer
+from bot.services.keyboards import organizer_keyboard
 
 SELECTING_SPEAKER, TYPING_QUESTION = range(2)
 
@@ -89,9 +91,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else "В данный момент доклады не идут"
     )
 
+    if await is_organizer(user.id):
+        markup = organizer_keyboard()
+    else:
+        markup = InlineKeyboardMarkup(buttons)
+
     await update.message.reply_text(
         f"Привет, {user.full_name}!\n\n{status}",
-        reply_markup=InlineKeyboardMarkup(buttons),
+        reply_markup=markup,
     )
 
 

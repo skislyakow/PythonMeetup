@@ -1,7 +1,23 @@
+import warnings
 from functools import wraps
 import logging
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardRemove,
+)
+
+from bot.services.keyboards import (
+    organizer_keyboard,
+    BUTTON_ACTIVATE,
+    BUTTON_BROADCAST,
+    BUTTON_SCHEDULE,
+    BUTTON_CLOSE,
+)
+
+
 from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
@@ -19,7 +35,16 @@ from bot.models.telegram_user import TelegramUser
 from bot.models.event import Event
 from bot.services import db_direct
 
+warnings.filterwarnings("ignore", "If 'per_message=False'")
+
 TITLE, START_TIME, END_TIME, SPEAKER, CONFIRM = range(5)
+
+# Состояния для редактирования события
+ES_FIELD, ES_TITLE, ES_DATE, ES_START, ES_END, ES_SPEAKER, ES_SAVE = range(
+    10, 17
+)
+
+BROADCAST_TEXT = 20
 
 create_event_async = sync_to_async(db_direct.create_event)
 logger = logging.getLogger(__name__)
@@ -46,7 +71,9 @@ def find_speaker_by_username(username):
 @organizer_required
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.message is not None
-    await update.message.reply_text("Ты организатор!")
+    await update.message.reply_text(
+        "Ты организатор!", reply_markup=organizer_keyboard()
+    )
 
 
 def parse_time(text: str) -> datetime | None:
@@ -64,13 +91,27 @@ def get_all_users():
 
 
 @organizer_required
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.message is not None
     text = " ".join(context.args or [])
-    if not text:
-        await update.message.reply_text("Использование: /broadcast <текст>")
-        return
+    if text:
+        await _send_broadcast(update, context, text)
+        return ConversationHandler.END
+    await update.message.reply_text(
+        "Введите текст рассылки:", reply_markup=ReplyKeyboardRemove()
+    )
+    return BROADCAST_TEXT
 
+
+async def broadcast_text_received(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    assert update.message is not None
+    await _send_broadcast(update, context, update.message.text)
+    return ConversationHandler.END
+
+
+async def _send_broadcast(update, context, text):
     users = await get_all_users()
     sent = 0
     for u in users:
@@ -79,9 +120,9 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sent += 1
         except Exception as e:
             logger.warning("Failed to send to %s: %s", u.user_id, e)
-
     await update.message.reply_text(
-        f"Сообщение отправлено {sent} из {len(users)} пользователям"
+        f"Сообщение отправлено {sent} из {len(users)} пользователям",
+        reply_markup=organizer_keyboard(),
     )
 
 
@@ -90,7 +131,9 @@ async def set_schedule_start(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
     assert update.message is not None
-    await update.message.reply_text("Название доклада?")
+    await update.message.reply_text(
+        "Название доклада?", reply_markup=ReplyKeyboardRemove()
+    )
     return TITLE
 
 
@@ -157,7 +200,7 @@ async def get_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=speaker.user_id,
             text=(
-                f"🎤 Вы назначены докладчиком на Python Meetup!\n"
+                "🎤 Вы назначены докладчиком на Python Meetup!\n"
                 f"Тема доклада: {context.user_data['title']}\n"
                 f"Начало: {start_str}\n"
                 f"Конец: {end_str}"
@@ -182,9 +225,13 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["start_time"],
             context.user_data["end_time"],
         )
-        await update.message.reply_text("Доклад добавлен!")
+        await update.message.reply_text(
+            "Доклад добавлен!", reply_markup=organizer_keyboard()
+        )
     elif text == "нет":
-        await update.message.reply_text("Отменено.")
+        await update.message.reply_text(
+            "Отменено.", reply_markup=organizer_keyboard()
+        )
         context.user_data.clear()
         return ConversationHandler.END
     else:
@@ -195,9 +242,19 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or context.user_data is None:
         return ConversationHandler.END
-    await update.message.reply_text("Отменено.")
+    await update.message.reply_text(
+        "Отменено.", reply_markup=organizer_keyboard()
+    )
     context.user_data.clear()
     return ConversationHandler.END
+
+
+async def close_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    assert update.message is not None
+    await update.message.reply_text(
+        "Меню закрыто. Нажмите /admin чтобы вернуть.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
 
 
 @sync_to_async
@@ -219,6 +276,18 @@ def deactivate_all_events():
     Event.objects.filter(is_active=True).update(is_active=False)
 
 
+@sync_to_async
+def get_event(event_id):
+    return Event.objects.select_related("speaker").get(pk=event_id)
+
+
+@sync_to_async
+def get_all_speakers():
+    return list(
+        TelegramUser.objects.filter(role="speaker").order_by("full_name")
+    )
+
+
 @organizer_required
 async def activate_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.message is not None
@@ -232,36 +301,45 @@ async def activate_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not any(e.is_active for e in events):
         lines.append("⏸ Никто не выступает\n")
 
-    buttons = []
+    assert context.user_data is not None
+    context.user_data["program_message_ids"] = []
+
+    header = await update.message.reply_text("\n".join(lines))
+    context.user_data["program_message_ids"].append(header.message_id)
+
     for e in events:
         marker = "\U0001f7e2" if e.is_active else "\U00002b1b"
         status = " (сейчас активен)" if e.is_active else ""
-        lines.append(
-            f"{marker} {e.start_time.strftime('%H:%M')} — {e.speaker.full_name}: {e.title}{status}"
-        )
-        if not e.is_active:
-            buttons.append(
-                [
-                    InlineKeyboardButton(
-                        f"Сделать активным: {e.title[:30]}",
-                        callback_data=f"activate_event_{e.id}",
-                    )
-                ]
-            )
-        else:
-            buttons.append(
-                [
-                    InlineKeyboardButton(
-                        f"Завершить: {e.title[:30]}",
-                        callback_data=f"deactivate_{e.id}",
-                    )
-                ]
-            )
+        text = f"{marker} {e.start_time.strftime('%H:%M')} — {e.speaker.full_name}: {e.title}{status}"
 
-    await update.message.reply_text(
-        "\n".join(lines),
-        reply_markup=InlineKeyboardMarkup(buttons) if buttons else None,
-    )
+        if e.is_active:
+            btn = [
+                [
+                    InlineKeyboardButton(
+                        "⏹ Завершить", callback_data=f"deactivate_{e.id}"
+                    ),
+                    InlineKeyboardButton(
+                        "✏️", callback_data=f"edit_event_{e.id}"
+                    ),
+                ]
+            ]
+        else:
+            btn = [
+                [
+                    InlineKeyboardButton(
+                        "✅ Сделать активным",
+                        callback_data=f"activate_event_{e.id}",
+                    ),
+                    InlineKeyboardButton(
+                        "✏️", callback_data=f"edit_event_{e.id}"
+                    ),
+                ]
+            ]
+
+        msg = await update.message.reply_text(
+            text, reply_markup=InlineKeyboardMarkup(btn)
+        )
+        context.user_data["program_message_ids"].append(msg.message_id)
 
 
 async def set_active_callback(
@@ -277,18 +355,407 @@ async def set_active_callback(
         return
 
     assert query.data is not None
+
+    assert context.user_data is not None
+    assert update.effective_chat is not None
+    assert query.message is not None
+    program_ids = context.user_data.pop("program_message_ids", [])
+    await context.bot.delete_message(
+        chat_id=update.effective_chat.id, message_id=query.message.message_id
+    )
+    for msg_id in program_ids:
+        try:
+            await context.bot.delete_message(
+                chat_id=update.effective_chat.id, message_id=msg_id
+            )
+        except Exception:
+            pass
+
     if query.data.startswith("deactivate_"):
         await deactivate_all_events()
-        await query.edit_message_text("⏸ Доклад завершён")
+        await update.effective_chat.send_message("⏸ Доклад завершён")
         return
 
     event_id = int(query.data.split("_")[-1])
     await activate_event(event_id)
-    await query.edit_message_text("✅ Активный докладчик изменён!")
+    await update.effective_chat.send_message("✅ Активный докладчик изменён!")
+
+
+def _build_edit_menu(event, changes):
+    title = changes.get("title", event.title)
+    speaker_name = changes.get("speaker_name", event.speaker.full_name)
+    date = changes.get("date", event.start_time.strftime("%d.%m.%Y"))
+    start = changes.get("start", event.start_time.strftime("%H:%M"))
+    end = changes.get("end", event.end_time.strftime("%H:%M"))
+
+    text = (
+        "✏️ **Редактирование доклада**\n\n"
+        f"📝 Название: {title}\n"
+        f"👤 Спикер: {speaker_name}\n"
+        f"📅 {date}  🕐 {start} — {end}"
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton("📝 Название", callback_data="es_title"),
+            InlineKeyboardButton("👤 Спикер", callback_data="es_speaker"),
+        ],
+        [
+            InlineKeyboardButton("📅 Дата", callback_data="es_date"),
+            InlineKeyboardButton("🕐 Начало", callback_data="es_start"),
+            InlineKeyboardButton("🕐 Конец", callback_data="es_end"),
+        ],
+        [
+            InlineKeyboardButton("✅ Сохранить", callback_data="es_save"),
+            InlineKeyboardButton("❌ Отмена", callback_data="es_cancel"),
+        ],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+async def show_edit_menu(query, context, event_id=None):
+    assert context.user_data is not None
+    if event_id:
+        context.user_data["edit_event_id"] = event_id
+        context.user_data["edit_changes"] = {}
+
+    event = await get_event(context.user_data["edit_event_id"])
+    changes = context.user_data.get("edit_changes", {})
+    text, markup = _build_edit_menu(event, changes)
+    await query.edit_message_text(text, reply_markup=markup)
+    return ES_FIELD
+
+
+async def show_edit_menu_from_msg(update, context):
+    assert context.user_data is not None
+    event = await get_event(context.user_data["edit_event_id"])
+    changes = context.user_data.get("edit_changes", {})
+    text, markup = _build_edit_menu(event, changes)
+    await update.message.reply_text(text, reply_markup=markup)
+    return ES_FIELD
+
+
+async def edit_event_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    assert query is not None
+    await query.answer()
+    assert query.data is not None
+    event_id = int(query.data.split("_")[-1])
+    return await show_edit_menu(query, context, event_id)
+
+
+async def edit_field_selected(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    assert query is not None
+    await query.answer()
+    assert context.user_data is not None
+
+    field = query.data
+
+    if field == "es_save":
+        event = await get_event(context.user_data["edit_event_id"])
+        changes = context.user_data.get("edit_changes", {})
+
+        title = changes.get("title", event.title)
+        speaker_name = changes.get("speaker_name", event.speaker.full_name)
+        date = changes.get("date", event.start_time.strftime("%d.%m.%Y"))
+        start = changes.get("start", event.start_time.strftime("%H:%M"))
+        end = changes.get("end", event.end_time.strftime("%H:%M"))
+
+        text = (
+            "✅ **Подтверждение изменений**\n\n"
+            f"📝 Название: {title}\n"
+            f"👤 Спикер: {speaker_name}\n"
+            f"📅 {date}  🕐 {start} — {end}\n\n"
+            "Сохранить?"
+        )
+        keyboard = [
+            [
+                InlineKeyboardButton("✓", callback_data="es_yes"),
+                InlineKeyboardButton("✕", callback_data="es_no"),
+            ],
+        ]
+        await query.edit_message_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return ES_SAVE
+
+    if field == "es_title":
+        await query.edit_message_text("📝 Введите новое название доклада:")
+        return ES_TITLE
+
+    if field == "es_date":
+        await query.edit_message_text("📅 Введите новую дату (ДД.ММ.ГГГГ):")
+        return ES_DATE
+
+    if field == "es_start":
+        await query.edit_message_text("🕐 Введите новое время начала (ЧЧ:ММ):")
+        return ES_START
+
+    if field == "es_end":
+        await query.edit_message_text("🕐 Введите новое время конца (ЧЧ:ММ):")
+        return ES_END
+
+    if field == "es_speaker":
+        speakers = await get_all_speakers()
+        if not speakers:
+            await query.edit_message_text("Нет спикеров в базе.")
+            return ES_FIELD
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    s.full_name, callback_data=f"es_speaker_{s.user_id}"
+                )
+            ]
+            for s in speakers
+        ]
+        keyboard.append(
+            [InlineKeyboardButton("« Назад", callback_data="es_back")]
+        )
+        await query.edit_message_text(
+            "👤 Выберите спикера:", reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return ES_SPEAKER
+
+    return ES_FIELD
+
+
+async def edit_title_received(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    assert update.message is not None
+    assert update.message.text is not None
+    assert context.user_data is not None
+    context.user_data.setdefault("edit_changes", {})["title"] = (
+        update.message.text
+    )
+    return await show_edit_menu_from_msg(update, context)
+
+
+async def edit_date_received(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    assert update.message is not None
+    assert update.message.text is not None
+    assert context.user_data is not None
+    try:
+        datetime.strptime(update.message.text, "%d.%m.%Y")
+    except ValueError:
+        await update.message.reply_text("Неверный формат. Введите ДД.ММ.ГГГГ:")
+        return ES_DATE
+    context.user_data.setdefault("edit_changes", {})["date"] = (
+        update.message.text
+    )
+    return await show_edit_menu_from_msg(update, context)
+
+
+async def edit_start_received(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    assert update.message is not None
+    assert update.message.text is not None
+    assert context.user_data is not None
+    try:
+        datetime.strptime(update.message.text, "%H:%M")
+    except ValueError:
+        await update.message.reply_text("Неверный формат. Введите ЧЧ:ММ:")
+        return ES_START
+    context.user_data.setdefault("edit_changes", {})["start"] = (
+        update.message.text
+    )
+    return await show_edit_menu_from_msg(update, context)
+
+
+async def edit_end_received(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    assert update.message is not None
+    assert update.message.text is not None
+    assert context.user_data is not None
+    try:
+        datetime.strptime(update.message.text, "%H:%M")
+    except ValueError:
+        await update.message.reply_text("Неверный формат. Введите ЧЧ:ММ:")
+        return ES_END
+    context.user_data.setdefault("edit_changes", {})["end"] = (
+        update.message.text
+    )
+    return await show_edit_menu_from_msg(update, context)
+
+
+async def edit_speaker_selected(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    assert query is not None
+    await query.answer()
+    assert context.user_data is not None
+
+    if query.data == "es_back":
+        return await show_edit_menu(query, context)
+
+    assert query.data is not None
+    speaker_id = int(query.data.split("_")[-1])
+    speaker = await sync_to_async(TelegramUser.objects.get)(user_id=speaker_id)
+    context.user_data.setdefault("edit_changes", {})["speaker_id"] = speaker_id
+    context.user_data["edit_changes"]["speaker_name"] = speaker.full_name
+    return await show_edit_menu(query, context)
+
+
+@sync_to_async
+def _apply_edit(event_id, changes):
+    event = Event.objects.get(pk=event_id)
+    if "title" in changes:
+        event.title = changes["title"]
+    if "speaker_id" in changes:
+        event.speaker = TelegramUser.objects.get(pk=changes["speaker_id"])
+
+    if "date" in changes or "start" in changes or "end" in changes:
+        date_str = changes.get("date", event.start_time.strftime("%d.%m.%Y"))
+        start_str = changes.get("start", event.start_time.strftime("%H:%M"))
+        end_str = changes.get("end", event.end_time.strftime("%H:%M"))
+        event.start_time = datetime.strptime(
+            f"{date_str} {start_str}", "%d.%m.%Y %H:%M"
+        )
+        event.end_time = datetime.strptime(
+            f"{date_str} {end_str}", "%d.%m.%Y %H:%M"
+        )
+
+    event.save()
+
+
+async def edit_save_confirm(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    assert query is not None
+    await query.answer()
+    assert context.user_data is not None
+    assert update.effective_chat is not None
+
+    if query.data == "es_no":
+        assert query.message is not None
+        await context.bot.delete_message(
+            chat_id=update.effective_chat.id,
+            message_id=query.message.message_id,
+        )
+        for msg_id in context.user_data.pop("program_message_ids", []):
+            try:
+                await context.bot.delete_message(
+                    chat_id=update.effective_chat.id, message_id=msg_id
+                )
+            except Exception:
+                pass
+        await update.effective_chat.send_message(
+            "Меню организатора:", reply_markup=organizer_keyboard()
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    event_id = context.user_data["edit_event_id"]
+    changes = context.user_data.get("edit_changes", {})
+    await _apply_edit(event_id, changes)
+
+    program_ids = context.user_data.pop("program_message_ids", [])
+    context.user_data.clear()
+
+    assert query.message is not None
+    await context.bot.delete_message(
+        chat_id=update.effective_chat.id, message_id=query.message.message_id
+    )
+    for msg_id in program_ids:
+        try:
+            await context.bot.delete_message(
+                chat_id=update.effective_chat.id, message_id=msg_id
+            )
+        except Exception:
+            pass
+    await update.effective_chat.send_message(
+        "Меню организатора:", reply_markup=organizer_keyboard()
+    )
+    return ConversationHandler.END
+
+
+async def edit_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    assert context.user_data is not None
+    program_ids = context.user_data.pop("program_message_ids", [])
+    assert update.effective_chat is not None
+    for msg_id in program_ids:
+        try:
+            chat_id = update.effective_chat.id
+            await context.bot.delete_message(
+                chat_id=chat_id, message_id=msg_id
+            )
+        except Exception:
+            pass
+    context.user_data.clear()
+    if update.callback_query:
+        assert update.callback_query.message is not None
+        await context.bot.delete_message(
+            chat_id=update.effective_chat.id,
+            message_id=update.callback_query.message.message_id,
+        )
+        await update.effective_chat.send_message(
+            "Меню организатора:", reply_markup=organizer_keyboard()
+        )
+    elif update.message:
+        await update.message.reply_text(
+            "❌ Редактирование отменено.", reply_markup=organizer_keyboard()
+        )
+    return ConversationHandler.END
+
+
+edit_conv = ConversationHandler(
+    entry_points=[
+        CallbackQueryHandler(edit_event_start, pattern=r"^edit_event_(\d+)$")
+    ],
+    states={
+        ES_FIELD: [
+            CallbackQueryHandler(
+                edit_field_selected, pattern=r"^es_(?!cancel)"
+            )
+        ],
+        ES_TITLE: [
+            MessageHandler(
+                filters.TEXT & ~filters.COMMAND, edit_title_received
+            )
+        ],
+        ES_DATE: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, edit_date_received)
+        ],
+        ES_START: [
+            MessageHandler(
+                filters.TEXT & ~filters.COMMAND, edit_start_received
+            )
+        ],
+        ES_END: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, edit_end_received)
+        ],
+        ES_SPEAKER: [
+            CallbackQueryHandler(
+                edit_speaker_selected, pattern=r"^es_speaker_|^es_back$"
+            )
+        ],
+        ES_SAVE: [
+            CallbackQueryHandler(edit_save_confirm, pattern=r"^es_(yes|no)$")
+        ],
+    },
+    fallbacks=[
+        CallbackQueryHandler(edit_cancel, pattern=r"^es_cancel$"),
+        CommandHandler("cancel", edit_cancel),
+        MessageHandler(filters.Regex(f"^{BUTTON_CLOSE}$"), edit_cancel),
+    ],
+)
 
 
 conv_handler = ConversationHandler(
-    entry_points=[CommandHandler("set_schedule", set_schedule_start)],
+    entry_points=[
+        CommandHandler("set_schedule", set_schedule_start),
+        MessageHandler(filters.Text([BUTTON_SCHEDULE]), set_schedule_start),
+    ],
     states={
         TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_title)],
         START_TIME: [
@@ -302,15 +769,39 @@ conv_handler = ConversationHandler(
         ],
         CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm)],
     },
-    fallbacks=[CommandHandler("cancel", cancel)],
+    fallbacks=[
+        CommandHandler("cancel", cancel),
+        MessageHandler(filters.Regex(f"^{BUTTON_CLOSE}$"), cancel),
+    ],
+)
+
+broadcast_conv = ConversationHandler(
+    entry_points=[
+        CommandHandler("broadcast", broadcast_start),
+        MessageHandler(filters.Text([BUTTON_BROADCAST]), broadcast_start),
+    ],
+    states={
+        BROADCAST_TEXT: [
+            MessageHandler(
+                filters.TEXT & ~filters.COMMAND, broadcast_text_received
+            )
+        ],
+    },
+    fallbacks=[
+        CommandHandler("cancel", cancel),
+        MessageHandler(filters.Regex(f"^{BUTTON_CLOSE}$"), cancel),
+    ],
 )
 
 organizer_handlers = [
     CommandHandler("admin", admin_panel),
-    CommandHandler("broadcast", broadcast),
+    broadcast_conv,
     CommandHandler("activate", activate_speaker),
     CallbackQueryHandler(
         set_active_callback, pattern="^(activate_event_|deactivate_)"
     ),
     conv_handler,
+    edit_conv,
+    MessageHandler(filters.Regex(f"^{BUTTON_CLOSE}$"), close_menu),
+    MessageHandler(filters.Regex(f"^{BUTTON_ACTIVATE}$"), activate_speaker),
 ]
