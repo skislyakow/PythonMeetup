@@ -11,6 +11,7 @@ class Question(models.Model):
     text = models.CharField(max_length=2000)
     answer = models.CharField(max_length=2000, null=True, blank=True)
     created_at = models.DateTimeField()
+    answered_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "questions"
