@@ -1,4 +1,7 @@
+import warnings
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+
+warnings.filterwarnings("ignore", "If 'per_message=False'")
 from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
