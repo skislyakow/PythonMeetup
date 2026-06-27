@@ -274,7 +274,13 @@ def activate_event(event_id):
 
 @sync_to_async
 def deactivate_all_events():
+    speaker_id = (
+        Event.objects.filter(is_active=True)
+        .values_list("speaker_id", flat=True)
+        .first()
+    )
     Event.objects.filter(is_active=True).update(is_active=False)
+    return speaker_id
 
 
 @sync_to_async
@@ -373,7 +379,12 @@ async def set_active_callback(
             pass
 
     if query.data.startswith("deactivate_"):
-        await deactivate_all_events()
+        prev_speaker_id = await deactivate_all_events()
+        if prev_speaker_id:
+            await context.bot.send_message(
+                chat_id=prev_speaker_id,
+                text="⏸ Ваш доклад завершён. Нажмите /start чтобы открыть панель гостя",
+            )
         await update.effective_chat.send_message("⏸ Доклад завершён")
         return
 
