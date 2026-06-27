@@ -47,13 +47,23 @@ def save_question(from_user_id, to_speaker_id, text):
 
 @sync_to_async
 def get_or_create_user(user_id, full_name, username):
-    user, _ = TelegramUser.objects.get_or_create(
+    user, created = TelegramUser.objects.get_or_create(
         user_id=user_id,
         defaults={
             "full_name": full_name or "",
             "username": username or "",
         },
     )
+    if not created:
+        updated = False
+        if full_name and user.full_name != full_name:
+            user.full_name = full_name
+            updated = True
+        if username and user.username != username:
+            user.username = username
+            updated = True
+        if updated:
+            user.save()
     return user
 
 
