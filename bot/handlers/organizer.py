@@ -43,6 +43,7 @@ def find_and_set_speaker(username):
     user = TelegramUser.objects.filter(username=username).first()
     if user:
         user.role = "speaker"
+        user.is_speaker = True
         user.save()
     return user
 

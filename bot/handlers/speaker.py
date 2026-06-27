@@ -10,16 +10,12 @@ from telegram.ext import (
 from asgiref.sync import sync_to_async
 from django.utils import timezone
 
+from bot.services.auth import is_speaker
 from bot.models.telegram_user import TelegramUser
 from bot.models.event import Event
 from bot.models.question import Question
 
 ANSWER_QUESTION = 1
-
-
-@sync_to_async
-def is_speaker(user_id):
-    return TelegramUser.objects.filter(user_id=user_id, role="speaker").exists()
 
 
 @sync_to_async

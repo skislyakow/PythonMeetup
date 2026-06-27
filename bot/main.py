@@ -27,7 +27,12 @@ def main() -> None:
 
     for uid in ORGANIZER_IDS:
         TelegramUser.objects.update_or_create(
-            user_id=uid, defaults={"role": "organizer"}
+            user_id=uid,
+            defaults={
+                "role": "organizer",
+                "is_organizer": True,
+                "is_speaker": False
+            }
         )
     print(
         "Организаторы в БД:",
