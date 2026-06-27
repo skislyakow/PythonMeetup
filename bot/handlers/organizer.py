@@ -269,6 +269,7 @@ def activate_event(event_id):
     event = Event.objects.get(pk=event_id)
     event.is_active = True
     event.save()
+    return event.speaker_id
 
 
 @sync_to_async
@@ -377,7 +378,14 @@ async def set_active_callback(
         return
 
     event_id = int(query.data.split("_")[-1])
-    await activate_event(event_id)
+    speaker_id = await activate_event(event_id)
+    await context.bot.send_message(
+        chat_id=speaker_id,
+        text=(
+            "🎤 Вы сейчас выступаете!\n"
+            "Нажмите /speaker чтобы открыть панель спикера"
+        ),
+    )
     await update.effective_chat.send_message("✅ Активный докладчик изменён!")
 
 
