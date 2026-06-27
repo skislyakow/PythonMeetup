@@ -17,7 +17,7 @@ from bot.models.telegram_user import TelegramUser
 from bot.models.event import Event
 from bot.models.question import Question
 from bot.services.auth import is_organizer
-from bot.services.keyboards import organizer_keyboard
+from bot.services.keyboards import organizer_keyboard, BUTTON_ASK
 
 SELECTING_SPEAKER, TYPING_QUESTION = range(2)
 
@@ -178,6 +178,26 @@ async def ask_question_start(
     return TYPING_QUESTION
 
 
+async def ask_question_start_from_msg(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    event = await get_active_speaker()
+    if not event:
+        await update.message.reply_text("Сейчас нет активного докладчика.")
+        return ConversationHandler.END
+
+    assert context.user_data is not None
+    context.user_data["speaker_id"] = event.speaker_id
+    context.user_data["speaker_name"] = event.speaker.full_name
+
+    assert update.message is not None
+    await update.message.reply_text(
+        f"Напишите ваш вопрос для {event.speaker.full_name}:"
+        "\n\n_Отправьте /cancel чтобы отменить_"
+    )
+    return TYPING_QUESTION
+
+
 async def receive_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     speaker_id = context.user_data.get("speaker_id")
@@ -200,7 +220,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 conv_handler = ConversationHandler(
     entry_points=[
-        CallbackQueryHandler(ask_question_start, pattern="^ask_question$")
+        CallbackQueryHandler(ask_question_start, pattern="^ask_question$"),
+        MessageHandler(filters.Text(BUTTON_ASK), ask_question_start_from_msg),
     ],
     states={
         TYPING_QUESTION: [
