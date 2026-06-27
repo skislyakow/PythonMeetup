@@ -205,13 +205,24 @@ async def receive_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await save_question(user.id, speaker_id, text)
 
-    await update.message.reply_text("Вопрос отправлен!")
+    if await is_organizer(user.id):
+        await update.message.reply_text(
+            "Вопрос отправлен!", reply_markup=organizer_keyboard()
+        )
+    else:
+        await update.message.reply_text("Вопрос отправлен!")
     context.user_data.clear()
     return ConversationHandler.END
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Отменено.")
+    user = update.effective_user
+    if await is_organizer(user.id):
+        await update.message.reply_text(
+            "Отменено.", reply_markup=organizer_keyboard()
+        )
+    else:
+        await update.message.reply_text("Отменено.")
     context.user_data.clear()
     return ConversationHandler.END
 
