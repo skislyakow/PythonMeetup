@@ -6,27 +6,20 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-from asgiref.sync import sync_to_async
 
-from bot.models.telegram_user import TelegramUser
-from bot.models.event import Event
 from bot.services.keyboards import (
     guest_keyboard,
     speaker_keyboard,
     organizer_keyboard,
     BUTTON_DONATE,
 )
+from bot.services.user_utils import (
+    get_user_role,
+    has_active_speaker,
+    get_organizers,
+)
 
 WAITING_FOR_AMOUNT = 1
-
-
-@sync_to_async
-def get_user_role(user_id):
-    try:
-        user = TelegramUser.objects.get(user_id=user_id)
-        return user.role
-    except TelegramUser.DoesNotExist:
-        return "guest"
 
 
 async def start_donate(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -85,15 +78,6 @@ async def process_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return ConversationHandler.END
 
-
-@sync_to_async
-def get_organizers():
-    return list(TelegramUser.objects.filter(role="organizer"))
-
-
-@sync_to_async
-def has_active_speaker():
-    return Event.objects.filter(is_active=True).exists()
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):

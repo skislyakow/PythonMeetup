@@ -18,6 +18,12 @@ from bot.services.keyboards import (
     BUTTON_SCHEDULE_CREATE,
     BUTTON_CLOSE,
 )
+from bot.services.user_utils import (
+    get_active_speaker,
+    get_all_events,
+    get_upcoming_speaker_events_count,
+    set_user_role,
+)
 
 
 from telegram.ext import (
@@ -73,7 +79,7 @@ def find_speaker_by_username(username):
 @organizer_required
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.message is not None
-    show_ask = await get_active_event() is not None
+    show_ask = await get_active_speaker() is not None
     await update.message.reply_text(
         "Ты организатор!", reply_markup=organizer_keyboard(show_ask=show_ask)
     )
@@ -92,10 +98,6 @@ def parse_time(text: str) -> datetime | None:
 def get_all_users():
     return list(TelegramUser.objects.all())
 
-
-@sync_to_async
-def get_active_event():
-    return Event.objects.filter(is_active=True).select_related("speaker").first()
 
 
 @organizer_required
@@ -267,12 +269,6 @@ async def close_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-@sync_to_async
-def get_all_events_with_speakers():
-    return list(
-        Event.objects.all().select_related("speaker").order_by("start_time")
-    )
-
 
 @sync_to_async
 def activate_event(event_id):
@@ -310,23 +306,11 @@ def get_all_speakers():
     )
 
 
-@sync_to_async
-def get_upcoming_speaker_events_count(user_id):
-    from django.utils import timezone
-    return Event.objects.filter(
-        speaker_id=user_id, start_time__gt=timezone.now()
-    ).count()
-
-
-@sync_to_async
-def set_user_role(user_id, role):
-    TelegramUser.objects.filter(user_id=user_id).update(role=role)
-
 
 @organizer_required
 async def activate_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.message is not None
-    events = await get_all_events_with_speakers()
+    events = await get_all_events()
     if not events:
         await update.message.reply_text("Нет докладов в программе")
         return
@@ -412,7 +396,7 @@ async def set_active_callback(
             pass
 
     if query.data.startswith("deactivate_"):
-        prev_event = await get_active_event()
+        prev_event = await get_active_speaker()
         prev_speaker_id = await deactivate_all_events()
         if prev_speaker_id:
             await context.bot.send_message(
@@ -445,7 +429,7 @@ async def set_active_callback(
         return
 
     # Деактивировать предыдущее активное событие
-    prev_event = await get_active_event()
+    prev_event = await get_active_speaker()
     prev_speaker_id = await deactivate_all_events()
     if prev_speaker_id:
         await context.bot.send_message(
@@ -496,7 +480,9 @@ async def set_active_callback(
         if u.user_id == user_id or u.user_id == speaker_id:
             continue
         try:
-            await context.bot.send_message(chat_id=u.user_id, text=notification, parse_mode="HTML")
+            await context.bot.send_message(
+                chat_id=u.user_id, text=notification, parse_mode="HTML"
+            )
             sent += 1
         except Exception:
             pass
@@ -879,7 +865,9 @@ edit_conv = ConversationHandler(
 conv_handler = ConversationHandler(
     entry_points=[
         CommandHandler("set_schedule", set_schedule_start),
-        MessageHandler(filters.Text([BUTTON_SCHEDULE_CREATE]), set_schedule_start),
+        MessageHandler(
+            filters.Text([BUTTON_SCHEDULE_CREATE]), set_schedule_start
+        ),
     ],
     states={
         TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_title)],
@@ -918,6 +906,7 @@ broadcast_conv = ConversationHandler(
     ],
 )
 
+
 async def delete_event_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
@@ -947,9 +936,7 @@ organizer_handlers = [
     CallbackQueryHandler(
         set_active_callback, pattern="^(activate_event_|deactivate_)"
     ),
-    CallbackQueryHandler(
-        delete_event_callback, pattern="^delete_event_"
-    ),
+    CallbackQueryHandler(delete_event_callback, pattern="^delete_event_"),
     conv_handler,
     edit_conv,
     MessageHandler(filters.Regex(f"^{BUTTON_CLOSE}$"), close_menu),

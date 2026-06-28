@@ -1,7 +1,4 @@
-import warnings
 from telegram import Update, ReplyKeyboardRemove
-
-warnings.filterwarnings("ignore", "If 'per_message=False'")
 from telegram.ext import (
     CommandHandler,
     ConversationHandler,
@@ -13,7 +10,6 @@ from asgiref.sync import sync_to_async
 from django.utils import timezone
 
 from bot.models.telegram_user import TelegramUser
-from bot.models.event import Event
 from bot.models.question import Question
 from bot.services.keyboards import (
     guest_keyboard,
@@ -22,26 +18,16 @@ from bot.services.keyboards import (
     BUTTON_SCHEDULE,
     BUTTON_ASK,
 )
+from bot.services.user_utils import (
+    get_active_speaker,
+    get_all_events,
+    get_user_role,
+)
 
 TYPING_QUESTION = 1
 
 
 # ─── Утилиты ──────────────────────────────────────────
-
-
-@sync_to_async
-def get_active_speaker():
-    event = (
-        Event.objects.filter(is_active=True).select_related("speaker").first()
-    )
-    return event
-
-
-@sync_to_async
-def get_all_events():
-    return list(
-        Event.objects.all().select_related("speaker").order_by("start_time")
-    )
 
 
 @sync_to_async
@@ -64,15 +50,6 @@ def get_or_create_user(user_id, full_name, username):
         },
     )
     return user
-
-
-@sync_to_async
-def get_user_role(user_id):
-    try:
-        user = TelegramUser.objects.get(user_id=user_id)
-        return user.role
-    except TelegramUser.DoesNotExist:
-        return "guest"
 
 
 # ─── /start ───────────────────────────────────────────
