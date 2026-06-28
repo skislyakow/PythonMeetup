@@ -64,7 +64,29 @@ async def process_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML",
         reply_markup=markup,
     )
+
+    organizers = await get_organizers()
+    for org in organizers:
+        try:
+            await context.bot.send_message(
+                chat_id=org.user_id,
+                text=(
+                    f"💰 <b>Донат!</b>\n\n"
+                    f"Пользователь: {user.full_name}"
+                    f"{' (@' + user.username + ')' if user.username else ''}\n"
+                    f"Сумма: <b>{amount} руб.</b>"
+                ),
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
     return ConversationHandler.END
+
+
+@sync_to_async
+def get_organizers():
+    return list(TelegramUser.objects.filter(role="organizer"))
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
