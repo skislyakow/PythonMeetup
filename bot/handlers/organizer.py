@@ -610,7 +610,8 @@ async def edit_field_selected(
         fname, fmt, prompt = _EDIT_FIELDS[field]
         context.user_data["_edit_field"] = fname
         context.user_data["_edit_fmt"] = fmt
-        await query.edit_message_text(prompt)
+        await query.message.delete()
+        await query.message.reply_text(prompt)
         return ES_TEXT
 
     if field == "es_speaker":
