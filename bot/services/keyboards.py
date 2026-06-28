@@ -22,7 +22,7 @@ def guest_keyboard() -> ReplyKeyboardMarkup:
 
 def speaker_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        [[BUTTON_SCHEDULE, BUTTON_ASK], [BUTTON_SPEAKER, BUTTON_DONATE]],
+        [[BUTTON_SCHEDULE, BUTTON_SPEAKER, BUTTON_DONATE]],
         resize_keyboard=True,
         input_field_placeholder="Выберите действие...",
     )

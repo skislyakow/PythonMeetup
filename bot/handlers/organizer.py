@@ -480,10 +480,7 @@ async def set_active_callback(
 
     await context.bot.send_message(
         chat_id=speaker_id,
-        text=(
-            "🎤 Вы сейчас выступаете!\n"
-            "Нажмите /speaker чтобы открыть панель спикера"
-        ),
+        text="🎤 Вы сейчас выступаете!",
         reply_markup=speaker_keyboard(),
     )
 
