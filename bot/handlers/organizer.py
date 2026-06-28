@@ -443,6 +443,36 @@ async def set_active_callback(
         await update.effective_chat.send_message("⏸ Доклад завершён")
         return
 
+    # Деактивировать предыдущее активное событие
+    prev_event = await get_active_event()
+    prev_speaker_id = await deactivate_all_events()
+    if prev_speaker_id:
+        await context.bot.send_message(
+            chat_id=prev_speaker_id,
+            text="⏸ Ваш доклад завершён. Вы теперь гость.",
+            reply_markup=guest_keyboard(),
+        )
+        upcoming = await get_upcoming_speaker_events_count(prev_speaker_id)
+        if not upcoming:
+            await set_user_role(prev_speaker_id, "guest")
+
+    if prev_event:
+        users = await get_all_users()
+        notification = (
+            f"⏸ <b>Доклад завершён</b>\n\n"
+            f"«{prev_event.title}»\n"
+            f"Спикер: {prev_event.speaker.full_name}"
+        )
+        for u in users:
+            if u.user_id == user_id or u.user_id == prev_speaker_id:
+                continue
+            try:
+                await context.bot.send_message(
+                    chat_id=u.user_id, text=notification, parse_mode="HTML"
+                )
+            except Exception:
+                pass
+
     event_id = int(query.data.split("_")[-1])
     event = await get_event(event_id)
     speaker_id = await activate_event(event_id)
