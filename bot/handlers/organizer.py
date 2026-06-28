@@ -11,6 +11,8 @@ from telegram import (
 
 from bot.services.keyboards import (
     organizer_keyboard,
+    guest_keyboard,
+    speaker_keyboard,
     BUTTON_ACTIVATE,
     BUTTON_BROADCAST,
     BUTTON_SCHEDULE_CREATE,
@@ -307,6 +309,19 @@ def get_all_speakers():
     )
 
 
+@sync_to_async
+def get_upcoming_speaker_events_count(user_id):
+    from django.utils import timezone
+    return Event.objects.filter(
+        speaker_id=user_id, start_time__gt=timezone.now()
+    ).count()
+
+
+@sync_to_async
+def set_user_role(user_id, role):
+    TelegramUser.objects.filter(user_id=user_id).update(role=role)
+
+
 @organizer_required
 async def activate_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.message is not None
@@ -401,8 +416,12 @@ async def set_active_callback(
         if prev_speaker_id:
             await context.bot.send_message(
                 chat_id=prev_speaker_id,
-                text="⏸ Ваш доклад завершён. Нажмите /start чтобы открыть панель гостя",
+                text="⏸ Ваш доклад завершён. Вы теперь гость.",
+                reply_markup=guest_keyboard(),
             )
+            upcoming = await get_upcoming_speaker_events_count(prev_speaker_id)
+            if not upcoming:
+                await set_user_role(prev_speaker_id, "guest")
 
         if prev_event:
             users = await get_all_users()
@@ -434,6 +453,7 @@ async def set_active_callback(
             "🎤 Вы сейчас выступаете!\n"
             "Нажмите /speaker чтобы открыть панель спикера"
         ),
+        reply_markup=speaker_keyboard(),
     )
 
     users = await get_all_users()
