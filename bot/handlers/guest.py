@@ -85,12 +85,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     event = await get_active_speaker()
     role = await get_user_role(user.id)
 
+    has_active = event is not None
+
     if role == "organizer":
-        markup = organizer_keyboard()
+        markup = organizer_keyboard(show_ask=has_active)
     elif role == "speaker":
         markup = speaker_keyboard()
     else:
-        markup = guest_keyboard()
+        markup = guest_keyboard(show_ask=has_active)
 
     status = (
         f"Сейчас выступает: {event.speaker.full_name} — {event.title}"
@@ -148,12 +150,13 @@ async def receive_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await save_question(user.id, speaker_id, text)
 
     role = await get_user_role(user.id)
+    has_active = await get_active_speaker() is not None
     if role == "organizer":
-        markup = organizer_keyboard()
+        markup = organizer_keyboard(show_ask=has_active)
     elif role == "speaker":
         markup = speaker_keyboard()
     else:
-        markup = guest_keyboard()
+        markup = guest_keyboard(show_ask=has_active)
     await update.message.reply_text("Вопрос отправлен!", reply_markup=markup)
     context.user_data.clear()
     return ConversationHandler.END
@@ -162,12 +165,13 @@ async def receive_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     role = await get_user_role(user.id)
+    has_active = await get_active_speaker() is not None
     if role == "organizer":
-        markup = organizer_keyboard()
+        markup = organizer_keyboard(show_ask=has_active)
     elif role == "speaker":
         markup = speaker_keyboard()
     else:
-        markup = guest_keyboard()
+        markup = guest_keyboard(show_ask=has_active)
     await update.message.reply_text("Отменено.", reply_markup=markup)
     context.user_data.clear()
     return ConversationHandler.END

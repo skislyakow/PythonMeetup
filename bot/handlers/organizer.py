@@ -73,8 +73,9 @@ def find_speaker_by_username(username):
 @organizer_required
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.message is not None
+    show_ask = await get_active_event() is not None
     await update.message.reply_text(
-        "Ты организатор!", reply_markup=organizer_keyboard()
+        "Ты организатор!", reply_markup=organizer_keyboard(show_ask=show_ask)
     )
 
 

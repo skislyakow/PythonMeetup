@@ -9,6 +9,7 @@ from telegram.ext import (
 from asgiref.sync import sync_to_async
 
 from bot.models.telegram_user import TelegramUser
+from bot.models.event import Event
 from bot.services.keyboards import (
     guest_keyboard,
     speaker_keyboard,
@@ -49,13 +50,14 @@ async def process_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     amount = int(text)
     user = update.effective_user
     role = await get_user_role(user.id)
+    show_ask = await has_active_speaker()
 
     if role == "organizer":
-        markup = organizer_keyboard()
+        markup = organizer_keyboard(show_ask=show_ask)
     elif role == "speaker":
         markup = speaker_keyboard()
     else:
-        markup = guest_keyboard()
+        markup = guest_keyboard(show_ask=show_ask)
 
     await update.message.reply_text(
         f"✅ <b>Спасибо за вашу поддержку, {user.full_name}!</b>\n\n"
@@ -89,15 +91,21 @@ def get_organizers():
     return list(TelegramUser.objects.filter(role="organizer"))
 
 
+@sync_to_async
+def has_active_speaker():
+    return Event.objects.filter(is_active=True).exists()
+
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     role = await get_user_role(user.id)
+    show_ask = await has_active_speaker()
     if role == "organizer":
-        markup = organizer_keyboard()
+        markup = organizer_keyboard(show_ask=show_ask)
     elif role == "speaker":
         markup = speaker_keyboard()
     else:
-        markup = guest_keyboard()
+        markup = guest_keyboard(show_ask=show_ask)
     await update.message.reply_text("❌ Донат отменён.", reply_markup=markup)
     context.user_data.clear()
     return ConversationHandler.END
