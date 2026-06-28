@@ -9,6 +9,7 @@ from bot.config import BOT_TOKEN, ORGANIZER_IDS
 from bot.handlers.organizer import organizer_handlers
 from bot.handlers.guest import guest_handlers
 from bot.handlers.speaker import speaker_handlers
+from bot.handlers.donates import donate_conv
 from bot.models.telegram_user import TelegramUser
 
 
@@ -19,6 +20,7 @@ def main() -> None:
         app.add_handler(h)
     for h in speaker_handlers:
         app.add_handler(h)
+    app.add_handler(donate_conv)
     for h in organizer_handlers:
         app.add_handler(h)
 

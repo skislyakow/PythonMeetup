@@ -16,6 +16,7 @@ from django.utils import timezone
 from bot.models.telegram_user import TelegramUser
 from bot.models.event import Event
 from bot.models.question import Question
+from bot.services.keyboards import speaker_keyboard, BUTTON_SPEAKER
 
 ANSWER_QUESTION = 1
 
@@ -74,10 +75,7 @@ async def speaker_panel(update, context):
 
     await update.message.reply_text(
         "Панель спикера",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("Выступления", callback_data="events")],
-            [InlineKeyboardButton("Вопросы", callback_data="questions")],
-        ]),
+        reply_markup=speaker_keyboard(),
     )
 
 
@@ -113,44 +111,65 @@ async def events(update, context):
 async def questions(update, context):
     query = update.callback_query
     await query.answer()
+    await _show_questions(query.from_user.id, query, context, edit=True)
 
-    questions_list = await get_questions(query.from_user.id)
+
+async def show_questions_from_message(update, context):
+    user_id = update.effective_user.id
+    if not await is_speaker(user_id):
+        await update.message.reply_text("Нет прав спикера")
+        return
+
+    await _show_questions(user_id, update.message, context, edit=False)
+
+
+async def _show_questions(user_id, query_or_msg, context, edit=False):
+    questions_list = await get_questions(user_id)
     if not questions_list:
-        await query.edit_message_text(
-            "Нет вопросов",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("Обновить", callback_data="questions")],
-                [InlineKeyboardButton("Назад", callback_data="back")],
-            ]),
-        )
+        msg = "Нет вопросов"
+        if edit:
+            await query_or_msg.edit_message_text(msg)
+        else:
+            await query_or_msg.reply_text(msg, reply_markup=speaker_keyboard())
         return
 
     context.user_data["qids"] = [q.id for q in questions_list]
     context.user_data["qi"] = 0
-    await show_question(query, questions_list[0], 0, len(questions_list))
+    await _display_question(query_or_msg, questions_list[0], 0, len(questions_list), edit)
 
 
-async def show_question(query, question, index, total):
+def _build_question_text(question, index, total):
     from_user_name = question.from_user.full_name if question.from_user else "Аноним"
-    
-    text = (
+    return (
         f"Вопрос {index + 1}/{total}\n"
         f"От: {from_user_name}\n"
         f"{question.text or '(пустой вопрос)'}"
     )
 
-    await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("◀️", callback_data="prev"),
-                InlineKeyboardButton("▶️", callback_data="next"),
-            ],
-            [InlineKeyboardButton("Ответить", callback_data=f"ans_{question.id}")],
-            [InlineKeyboardButton("Пропустить", callback_data=f"skip_{question.id}")],
-            [InlineKeyboardButton("Назад", callback_data="back")],
-        ]),
-    )
+
+def _build_question_keyboard(question_id):
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("◀️", callback_data="prev"),
+            InlineKeyboardButton("▶️", callback_data="next"),
+        ],
+        [InlineKeyboardButton("Ответить", callback_data=f"ans_{question_id}")],
+        [InlineKeyboardButton("Пропустить", callback_data=f"skip_{question_id}")],
+        [InlineKeyboardButton("Назад", callback_data="back")],
+    ])
+
+
+async def _display_question(query_or_msg, question, index, total, edit=False):
+    text = _build_question_text(question, index, total)
+    markup = _build_question_keyboard(question.id)
+    if edit:
+        await query_or_msg.edit_message_text(text, reply_markup=markup)
+    else:
+        await query_or_msg.reply_text(text, reply_markup=markup)
+
+
+async def show_question(query, question, index, total):
+    await _display_question(query, question, index, total, edit=True)
 
 
 async def navigate(update, context):
@@ -258,24 +277,10 @@ async def receive_answer(update, context):
     first_qid = context.user_data["qids"][0]
     next_q = await get_question(first_qid)
 
-    from_user_name = next_q.from_user.full_name if next_q.from_user else "Аноним"
-    text = (
-        f"Вопрос 1/{len(context.user_data['qids'])}\n"
-        f"От: {from_user_name}\n"
-        f"{next_q.text}"
-    )
-
+    text = _build_question_text(next_q, 0, len(context.user_data["qids"]))
     await update.message.reply_text(
         text,
-        reply_markup=InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("◀️", callback_data="prev"),
-                InlineKeyboardButton("▶️", callback_data="next"),
-            ],
-            [InlineKeyboardButton("Ответить", callback_data=f"ans_{next_q.id}")],
-            [InlineKeyboardButton("Пропустить", callback_data=f"skip_{next_q.id}")],
-            [InlineKeyboardButton("Назад", callback_data="back")],
-        ]),
+        reply_markup=_build_question_keyboard(next_q.id),
     )
 
     return ConversationHandler.END
@@ -286,13 +291,8 @@ async def back(update, context):
     await query.answer()
     context.user_data.clear()
 
-    await query.edit_message_text(
-        "Панель спикера",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("Выступления", callback_data="events")],
-            [InlineKeyboardButton("Вопросы", callback_data="questions")],
-        ]),
-    )
+    await query.message.delete()
+    await query.message.reply_text("Панель спикера", reply_markup=speaker_keyboard())
 
 
 async def cancel(update, context):
@@ -313,6 +313,7 @@ conv_handler = ConversationHandler(
 
 speaker_handlers = [
     CommandHandler("speaker", speaker_panel),
+    MessageHandler(filters.Text(BUTTON_SPEAKER), show_questions_from_message),
     CallbackQueryHandler(events, pattern="^events$"),
     CallbackQueryHandler(questions, pattern="^questions$"),
     CallbackQueryHandler(back, pattern="^back$"),

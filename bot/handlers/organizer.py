@@ -13,7 +13,7 @@ from bot.services.keyboards import (
     organizer_keyboard,
     BUTTON_ACTIVATE,
     BUTTON_BROADCAST,
-    BUTTON_SCHEDULE,
+    BUTTON_SCHEDULE_CREATE,
     BUTTON_CLOSE,
 )
 
@@ -88,6 +88,11 @@ def parse_time(text: str) -> datetime | None:
 @sync_to_async
 def get_all_users():
     return list(TelegramUser.objects.all())
+
+
+@sync_to_async
+def get_active_event():
+    return Event.objects.filter(is_active=True).select_related("speaker").first()
 
 
 @organizer_required
@@ -289,6 +294,11 @@ def get_event(event_id):
 
 
 @sync_to_async
+def delete_event(event_id):
+    Event.objects.get(pk=event_id).delete()
+
+
+@sync_to_async
 def get_all_speakers():
     return list(
         TelegramUser.objects.filter(role="speaker").order_by("full_name")
@@ -319,6 +329,9 @@ async def activate_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status = " (сейчас активен)" if e.is_active else ""
         text = f"{marker} {e.start_time.strftime('%H:%M')} — {e.speaker.full_name}: {e.title}{status}"
 
+        delete_btn = InlineKeyboardButton(
+            "🗑️", callback_data=f"delete_event_{e.id}"
+        )
         if e.is_active:
             btn = [
                 [
@@ -328,6 +341,7 @@ async def activate_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     InlineKeyboardButton(
                         "✏️", callback_data=f"edit_event_{e.id}"
                     ),
+                    delete_btn,
                 ]
             ]
         else:
@@ -340,6 +354,7 @@ async def activate_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     InlineKeyboardButton(
                         "✏️", callback_data=f"edit_event_{e.id}"
                     ),
+                    delete_btn,
                 ]
             ]
 
@@ -379,17 +394,38 @@ async def set_active_callback(
             pass
 
     if query.data.startswith("deactivate_"):
+        prev_event = await get_active_event()
         prev_speaker_id = await deactivate_all_events()
         if prev_speaker_id:
             await context.bot.send_message(
                 chat_id=prev_speaker_id,
                 text="⏸ Ваш доклад завершён. Нажмите /start чтобы открыть панель гостя",
             )
+
+        if prev_event:
+            users = await get_all_users()
+            notification = (
+                f"⏸ <b>Доклад завершён</b>\n\n"
+                f"«{prev_event.title}»\n"
+                f"Спикер: {prev_event.speaker.full_name}"
+            )
+            for u in users:
+                if u.user_id == user_id or u.user_id == prev_speaker_id:
+                    continue
+                try:
+                    await context.bot.send_message(
+                        chat_id=u.user_id, text=notification, parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
+
         await update.effective_chat.send_message("⏸ Доклад завершён")
         return
 
     event_id = int(query.data.split("_")[-1])
+    event = await get_event(event_id)
     speaker_id = await activate_event(event_id)
+
     await context.bot.send_message(
         chat_id=speaker_id,
         text=(
@@ -397,7 +433,26 @@ async def set_active_callback(
             "Нажмите /speaker чтобы открыть панель спикера"
         ),
     )
-    await update.effective_chat.send_message("✅ Активный докладчик изменён!")
+
+    users = await get_all_users()
+    notification = (
+        f"🎤 <b>Начался доклад!</b>\n\n"
+        f"«{event.title}»\n"
+        f"Спикер: {event.speaker.full_name}"
+    )
+    sent = 0
+    for u in users:
+        if u.user_id == user_id or u.user_id == speaker_id:
+            continue
+        try:
+            await context.bot.send_message(chat_id=u.user_id, text=notification, parse_mode="HTML")
+            sent += 1
+        except Exception:
+            pass
+
+    await update.effective_chat.send_message(
+        f"✅ Доклад «{event.title}» запущен. Уведомлено {sent} участников."
+    )
 
 
 def _build_edit_menu(event, changes):
@@ -773,7 +828,7 @@ edit_conv = ConversationHandler(
 conv_handler = ConversationHandler(
     entry_points=[
         CommandHandler("set_schedule", set_schedule_start),
-        MessageHandler(filters.Text([BUTTON_SCHEDULE]), set_schedule_start),
+        MessageHandler(filters.Text([BUTTON_SCHEDULE_CREATE]), set_schedule_start),
     ],
     states={
         TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_title)],
@@ -812,12 +867,37 @@ broadcast_conv = ConversationHandler(
     ],
 )
 
+async def delete_event_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    assert query is not None
+    await query.answer()
+
+    user_id = query.from_user.id
+    if not await is_organizer(user_id):
+        return
+
+    assert query.data is not None
+    event_id = int(query.data.split("_")[-1])
+    await delete_event(event_id)
+
+    assert update.effective_chat is not None
+    assert query.message is not None
+    await context.bot.delete_message(
+        chat_id=update.effective_chat.id, message_id=query.message.message_id
+    )
+
+
 organizer_handlers = [
     CommandHandler("admin", admin_panel),
     broadcast_conv,
     CommandHandler("activate", activate_speaker),
     CallbackQueryHandler(
         set_active_callback, pattern="^(activate_event_|deactivate_)"
+    ),
+    CallbackQueryHandler(
+        delete_event_callback, pattern="^delete_event_"
     ),
     conv_handler,
     edit_conv,

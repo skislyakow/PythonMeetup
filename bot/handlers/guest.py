@@ -1,10 +1,9 @@
 import warnings
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ReplyKeyboardRemove
 
 warnings.filterwarnings("ignore", "If 'per_message=False'")
 from telegram.ext import (
     CommandHandler,
-    CallbackQueryHandler,
     ConversationHandler,
     MessageHandler,
     filters,
@@ -16,10 +15,15 @@ from django.utils import timezone
 from bot.models.telegram_user import TelegramUser
 from bot.models.event import Event
 from bot.models.question import Question
-from bot.services.auth import is_organizer
-from bot.services.keyboards import organizer_keyboard, BUTTON_ASK
+from bot.services.keyboards import (
+    guest_keyboard,
+    speaker_keyboard,
+    organizer_keyboard,
+    BUTTON_SCHEDULE,
+    BUTTON_ASK,
+)
 
-SELECTING_SPEAKER, TYPING_QUESTION = range(2)
+TYPING_QUESTION = 1
 
 
 # ─── Утилиты ──────────────────────────────────────────
@@ -62,6 +66,15 @@ def get_or_create_user(user_id, full_name, username):
     return user
 
 
+@sync_to_async
+def get_user_role(user_id):
+    try:
+        user = TelegramUser.objects.get(user_id=user_id)
+        return user.role
+    except TelegramUser.DoesNotExist:
+        return "guest"
+
+
 # ─── /start ───────────────────────────────────────────
 
 
@@ -70,31 +83,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await get_or_create_user(user.id, user.full_name, user.username)
 
     event = await get_active_speaker()
+    role = await get_user_role(user.id)
 
-    buttons = []
-    if event:
-        buttons.append(
-            [
-                InlineKeyboardButton(
-                    f"Задать вопрос {event.speaker.full_name}",
-                    callback_data="ask_question",
-                )
-            ]
-        )
-    buttons.append(
-        [InlineKeyboardButton("Программа", callback_data="schedule")]
-    )
+    if role == "organizer":
+        markup = organizer_keyboard()
+    elif role == "speaker":
+        markup = speaker_keyboard()
+    else:
+        markup = guest_keyboard()
 
     status = (
         f"Сейчас выступает: {event.speaker.full_name} — {event.title}"
         if event
         else "В данный момент доклады не идут"
     )
-
-    if await is_organizer(user.id):
-        markup = organizer_keyboard()
-    else:
-        markup = InlineKeyboardMarkup(buttons)
 
     await update.message.reply_text(
         f"Привет, {user.full_name}!\n\n{status}",
@@ -106,9 +108,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
     events = await get_all_events()
     lines = ["Программа:\n"]
     for e in events:
@@ -116,42 +115,7 @@ async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(
             f"{marker} {e.start_time.strftime('%H:%M')} — {e.speaker.full_name}: {e.title}"
         )
-
-    await query.edit_message_text(
-        "\n".join(lines),
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("Назад", callback_data="back_to_menu")]]
-        ),
-    )
-
-
-async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    context.user_data.clear()
-    event = await get_active_speaker()
-    buttons = []
-    if event:
-        buttons.append(
-            [
-                InlineKeyboardButton(
-                    f"Задать вопрос {event.speaker.full_name}",
-                    callback_data="ask_question",
-                )
-            ]
-        )
-    buttons.append(
-        [InlineKeyboardButton("Программа", callback_data="schedule")]
-    )
-    status = (
-        f"Сейчас выступает: {event.speaker.full_name} — {event.title}"
-        if event
-        else "В данный момент доклады не идут"
-    )
-    await query.edit_message_text(
-        status,
-        reply_markup=InlineKeyboardMarkup(buttons),
-    )
+    await update.message.reply_text("\n".join(lines))
 
 
 # ─── Задать вопрос (Conversation) ─────────────────────
@@ -160,40 +124,18 @@ async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ask_question_start(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
-    query = update.callback_query
-    await query.answer()
-
-    event = await get_active_speaker()
-    if not event:
-        await query.edit_message_text("Сейчас нет активного докладчика.")
-        return ConversationHandler.END
-
-    context.user_data["speaker_id"] = event.speaker_id
-    context.user_data["speaker_name"] = event.speaker.full_name
-
-    await query.edit_message_text(
-        f"Напишите ваш вопрос для {event.speaker.full_name}:"
-        "\n\n_Отправьте /cancel чтобы отменить_"
-    )
-    return TYPING_QUESTION
-
-
-async def ask_question_start_from_msg(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-):
     event = await get_active_speaker()
     if not event:
         await update.message.reply_text("Сейчас нет активного докладчика.")
         return ConversationHandler.END
 
-    assert context.user_data is not None
     context.user_data["speaker_id"] = event.speaker_id
     context.user_data["speaker_name"] = event.speaker.full_name
 
-    assert update.message is not None
     await update.message.reply_text(
         f"Напишите ваш вопрос для {event.speaker.full_name}:"
-        "\n\n_Отправьте /cancel чтобы отменить_"
+        "\n\n_Отправьте /cancel чтобы отменить_",
+        reply_markup=ReplyKeyboardRemove(),
     )
     return TYPING_QUESTION
 
@@ -205,24 +147,28 @@ async def receive_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await save_question(user.id, speaker_id, text)
 
-    if await is_organizer(user.id):
-        await update.message.reply_text(
-            "Вопрос отправлен!", reply_markup=organizer_keyboard()
-        )
+    role = await get_user_role(user.id)
+    if role == "organizer":
+        markup = organizer_keyboard()
+    elif role == "speaker":
+        markup = speaker_keyboard()
     else:
-        await update.message.reply_text("Вопрос отправлен!")
+        markup = guest_keyboard()
+    await update.message.reply_text("Вопрос отправлен!", reply_markup=markup)
     context.user_data.clear()
     return ConversationHandler.END
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if await is_organizer(user.id):
-        await update.message.reply_text(
-            "Отменено.", reply_markup=organizer_keyboard()
-        )
+    role = await get_user_role(user.id)
+    if role == "organizer":
+        markup = organizer_keyboard()
+    elif role == "speaker":
+        markup = speaker_keyboard()
     else:
-        await update.message.reply_text("Отменено.")
+        markup = guest_keyboard()
+    await update.message.reply_text("Отменено.", reply_markup=markup)
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -231,8 +177,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 conv_handler = ConversationHandler(
     entry_points=[
-        CallbackQueryHandler(ask_question_start, pattern="^ask_question$"),
-        MessageHandler(filters.Text(BUTTON_ASK), ask_question_start_from_msg),
+        MessageHandler(filters.Text(BUTTON_ASK), ask_question_start),
     ],
     states={
         TYPING_QUESTION: [
@@ -244,7 +189,6 @@ conv_handler = ConversationHandler(
 
 guest_handlers = [
     CommandHandler("start", start),
-    CallbackQueryHandler(show_schedule, pattern="^schedule$"),
-    CallbackQueryHandler(back_to_menu, pattern="^back_to_menu$"),
+    MessageHandler(filters.Text(BUTTON_SCHEDULE), show_schedule),
     conv_handler,
 ]
