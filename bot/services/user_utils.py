@@ -46,3 +46,18 @@ def set_user_role(user_id, role):
 @sync_to_async
 def get_organizers():
     return list(TelegramUser.objects.filter(role="organizer"))
+
+
+def format_event_line(e, *, with_status=False):
+    marker = "\U0001f7e2" if e.is_active else "\U00002b1b"
+    base = f"{marker} {e.start_time.strftime('%H:%M')} — {e.speaker.full_name}: {e.title}"
+    if with_status and e.is_active:
+        base += " (сейчас активен)"
+    return base
+
+
+def format_schedule(events, *, with_status=False):
+    lines = ["Программа:\n"]
+    for e in events:
+        lines.append(format_event_line(e, with_status=with_status))
+    return "\n".join(lines)

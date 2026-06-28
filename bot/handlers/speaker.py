@@ -1,3 +1,4 @@
+from functools import wraps
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     CommandHandler,
@@ -16,6 +17,15 @@ from bot.models.question import Question
 from bot.services.keyboards import speaker_keyboard, BUTTON_SPEAKER
 
 ANSWER_QUESTION = 1
+
+
+def callback_handler(func):
+    @wraps(func)
+    async def wrapper(update, context, *args, **kwargs):
+        query = update.callback_query
+        await query.answer()
+        return await func(update, context, query, *args, **kwargs)
+    return wrapper
 
 
 @sync_to_async
@@ -76,10 +86,8 @@ async def speaker_panel(update, context):
     )
 
 
-async def events(update, context):
-    query = update.callback_query
-    await query.answer()
-
+@callback_handler
+async def events(update, context, query):
     user_id = query.from_user.id
     current = await get_current_event(user_id)
     next_ev = await get_next_event(user_id)
@@ -105,9 +113,8 @@ async def events(update, context):
     )
 
 
-async def questions(update, context):
-    query = update.callback_query
-    await query.answer()
+@callback_handler
+async def questions(update, context, query):
     await _show_questions(query.from_user.id, query, context, edit=True)
 
 
@@ -165,13 +172,8 @@ async def _display_question(query_or_msg, question, index, total, edit=False):
         await query_or_msg.reply_text(text, reply_markup=markup)
 
 
-async def show_question(query, question, index, total):
-    await _display_question(query, question, index, total, edit=True)
-
-
-async def navigate(update, context):
-    query = update.callback_query
-    await query.answer()
+@callback_handler
+async def navigate(update, context, query):
 
     if "qids" not in context.user_data:
         await query.edit_message_text("Ошибка")
@@ -188,13 +190,11 @@ async def navigate(update, context):
     context.user_data["qi"] = idx
     qid = context.user_data["qids"][idx]
     question = await get_question(qid)
-    await show_question(query, question, idx, len(context.user_data["qids"]))
+    await _display_question(query, question, idx, len(context.user_data["qids"]), edit=True)
 
 
-async def skip_question(update, context):
-    query = update.callback_query
-    await query.answer()
-
+@callback_handler
+async def skip_question(update, context, query):
     qid = int(query.data.split("_")[1])
     if "qids" not in context.user_data or qid not in context.user_data["qids"]:
         await query.edit_message_text("Вопрос уже неактивен")
@@ -213,13 +213,11 @@ async def skip_question(update, context):
     context.user_data["qi"] = 0
     first_qid = context.user_data["qids"][0]
     question = await get_question(first_qid)
-    await show_question(query, question, 0, len(context.user_data["qids"]))
+    await _display_question(query, question, 0, len(context.user_data["qids"]), edit=True)
 
 
-async def start_answer(update, context):
-    query = update.callback_query
-    await query.answer()
-
+@callback_handler
+async def start_answer(update, context, query):
     qid = int(query.data.split("_")[1])
     question = await get_question(qid)
 
@@ -283,9 +281,8 @@ async def receive_answer(update, context):
     return ConversationHandler.END
 
 
-async def back(update, context):
-    query = update.callback_query
-    await query.answer()
+@callback_handler
+async def back(update, context, query):
     context.user_data.clear()
 
     await query.message.delete()

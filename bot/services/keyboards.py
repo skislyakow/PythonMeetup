@@ -1,4 +1,5 @@
 from telegram import ReplyKeyboardMarkup
+from bot.services.user_utils import get_user_role, has_active_speaker
 
 # ─── Константы кнопок ─────────────────────────────────
 
@@ -44,3 +45,14 @@ def organizer_keyboard(*, show_ask=True) -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
     )
+
+
+async def get_role_based_keyboard(user_id: int, *, show_ask: bool | None = None) -> ReplyKeyboardMarkup:
+    role = await get_user_role(user_id)
+    if show_ask is None:
+        show_ask = await has_active_speaker()
+    if role == "organizer":
+        return organizer_keyboard(show_ask=show_ask)
+    elif role == "speaker":
+        return speaker_keyboard()
+    return guest_keyboard(show_ask=show_ask)

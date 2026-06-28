@@ -8,16 +8,10 @@ from telegram.ext import (
 )
 
 from bot.services.keyboards import (
-    guest_keyboard,
-    speaker_keyboard,
-    organizer_keyboard,
+    get_role_based_keyboard,
     BUTTON_DONATE,
 )
-from bot.services.user_utils import (
-    get_user_role,
-    has_active_speaker,
-    get_organizers,
-)
+from bot.services.user_utils import get_organizers
 
 WAITING_FOR_AMOUNT = 1
 
@@ -42,15 +36,8 @@ async def process_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     amount = int(text)
     user = update.effective_user
-    role = await get_user_role(user.id)
-    show_ask = await has_active_speaker()
 
-    if role == "organizer":
-        markup = organizer_keyboard(show_ask=show_ask)
-    elif role == "speaker":
-        markup = speaker_keyboard()
-    else:
-        markup = guest_keyboard(show_ask=show_ask)
+    markup = await get_role_based_keyboard(user.id)
 
     await update.message.reply_text(
         f"✅ <b>Спасибо за вашу поддержку, {user.full_name}!</b>\n\n"
@@ -81,15 +68,7 @@ async def process_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    role = await get_user_role(user.id)
-    show_ask = await has_active_speaker()
-    if role == "organizer":
-        markup = organizer_keyboard(show_ask=show_ask)
-    elif role == "speaker":
-        markup = speaker_keyboard()
-    else:
-        markup = guest_keyboard(show_ask=show_ask)
+    markup = await get_role_based_keyboard(update.effective_user.id)
     await update.message.reply_text("❌ Донат отменён.", reply_markup=markup)
     context.user_data.clear()
     return ConversationHandler.END

@@ -12,16 +12,14 @@ from django.utils import timezone
 from bot.models.telegram_user import TelegramUser
 from bot.models.question import Question
 from bot.services.keyboards import (
-    guest_keyboard,
-    speaker_keyboard,
-    organizer_keyboard,
+    get_role_based_keyboard,
     BUTTON_SCHEDULE,
     BUTTON_ASK,
 )
 from bot.services.user_utils import (
     get_active_speaker,
     get_all_events,
-    get_user_role,
+    format_schedule,
 )
 
 TYPING_QUESTION = 1
@@ -60,16 +58,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await get_or_create_user(user.id, user.full_name, user.username)
 
     event = await get_active_speaker()
-    role = await get_user_role(user.id)
 
-    has_active = event is not None
-
-    if role == "organizer":
-        markup = organizer_keyboard(show_ask=has_active)
-    elif role == "speaker":
-        markup = speaker_keyboard()
-    else:
-        markup = guest_keyboard(show_ask=has_active)
+    markup = await get_role_based_keyboard(user.id, show_ask=event is not None)
 
     status = (
         f"Сейчас выступает: {event.speaker.full_name} — {event.title}"
@@ -88,13 +78,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     events = await get_all_events()
-    lines = ["Программа:\n"]
-    for e in events:
-        marker = "\U0001f7e2" if e.is_active else "\U00002b1b"
-        lines.append(
-            f"{marker} {e.start_time.strftime('%H:%M')} — {e.speaker.full_name}: {e.title}"
-        )
-    await update.message.reply_text("\n".join(lines))
+    await update.message.reply_text(format_schedule(events))
 
 
 # ─── Задать вопрос (Conversation) ─────────────────────
@@ -126,29 +110,14 @@ async def receive_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await save_question(user.id, speaker_id, text)
 
-    role = await get_user_role(user.id)
-    has_active = await get_active_speaker() is not None
-    if role == "organizer":
-        markup = organizer_keyboard(show_ask=has_active)
-    elif role == "speaker":
-        markup = speaker_keyboard()
-    else:
-        markup = guest_keyboard(show_ask=has_active)
+    markup = await get_role_based_keyboard(user.id)
     await update.message.reply_text("Вопрос отправлен!", reply_markup=markup)
     context.user_data.clear()
     return ConversationHandler.END
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    role = await get_user_role(user.id)
-    has_active = await get_active_speaker() is not None
-    if role == "organizer":
-        markup = organizer_keyboard(show_ask=has_active)
-    elif role == "speaker":
-        markup = speaker_keyboard()
-    else:
-        markup = guest_keyboard(show_ask=has_active)
+    markup = await get_role_based_keyboard(update.effective_user.id)
     await update.message.reply_text("Отменено.", reply_markup=markup)
     context.user_data.clear()
     return ConversationHandler.END
