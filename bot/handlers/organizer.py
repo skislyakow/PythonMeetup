@@ -476,6 +476,7 @@ async def set_active_callback(
     event_id = int(query.data.split("_")[-1])
     event = await get_event(event_id)
     speaker_id = await activate_event(event_id)
+    await set_user_role(speaker_id, "speaker")
 
     await context.bot.send_message(
         chat_id=speaker_id,
