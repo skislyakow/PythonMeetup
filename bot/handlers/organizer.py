@@ -94,6 +94,7 @@ def find_speaker_by_username(username):
 @organizer_required
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.message is not None
+    await set_user_role(update.effective_user.id, "organizer")
     show_ask = await get_active_speaker() is not None
     await update.message.reply_text(
         "Ты организатор!", reply_markup=organizer_keyboard(show_ask=show_ask)
@@ -395,7 +396,7 @@ def delete_event(event_id):
 @sync_to_async
 def get_all_speakers():
     return list(
-        TelegramUser.objects.filter(role="speaker").order_by("full_name")
+        TelegramUser.objects.all().order_by("full_name")
     )
 
 
@@ -546,7 +547,7 @@ def _build_edit_menu(event, changes):
     return text, InlineKeyboardMarkup(keyboard)
 
 
-async def __show_edit_menu(query_or_msg, context, event_id=None):
+async def _show_edit_menu(query_or_msg, context, event_id=None):
     assert context.user_data is not None
     if event_id:
         context.user_data["edit_event_id"] = event_id
@@ -686,7 +687,11 @@ def _apply_edit(event_id, changes):
     if "title" in changes:
         event.title = changes["title"]
     if "speaker_id" in changes:
-        event.speaker = TelegramUser.objects.get(pk=changes["speaker_id"])
+        new_speaker = TelegramUser.objects.get(pk=changes["speaker_id"])
+        if new_speaker.role != "speaker":
+            new_speaker.role = "speaker"
+            new_speaker.save()
+        event.speaker = new_speaker
 
     if "date" in changes or "start" in changes or "end" in changes:
         date_str = changes.get("date", event.start_time.strftime("%d.%m.%Y"))

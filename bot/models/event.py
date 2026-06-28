@@ -18,4 +18,4 @@ class Event(models.Model):
             Event.objects.filter(is_active=True).exclude(pk=self.pk).update(
                 is_active=False
             )
-            super().save(*args, **kwargs)
+        super().save(*args, **kwargs)
