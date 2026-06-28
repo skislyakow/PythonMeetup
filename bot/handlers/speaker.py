@@ -95,14 +95,14 @@ async def events(update, context, query):
 
     text = ""
     if current:
-        text += f"Сейчас: {current.title}\nДо {current.end_time.strftime('%H:%M')}\n\n"
+        text += f"Сейчас: {current.title}\nДо {current.end_time.strftime('%d.%m %H:%M')}\n\n"
     if next_ev:
-        text += f"Следующий: {next_ev.title}\nВ {next_ev.start_time.strftime('%H:%M')}\n\n"
+        text += f"Следующий: {next_ev.title}\nВ {next_ev.start_time.strftime('%d.%m %H:%M')}\n\n"
     if not current and not next_ev:
         text = "Нет выступлений\n\n"
 
     for e in all_ev[:5]:
-        text += f"{'🟢' if e.is_active else '⏳'} {e.start_time.strftime('%H:%M')} {e.title}\n"
+        text += f"{'🟢' if e.is_active else '⏳'} {e.start_time.strftime('%d.%m %H:%M')} {e.title}\n"
 
     await query.edit_message_text(
         text or "Нет выступлений",
@@ -130,11 +130,11 @@ async def show_questions_from_message(update, context):
 async def _show_questions(user_id, query_or_msg, context, edit=False):
     questions_list = await get_questions(user_id)
     if not questions_list:
-        msg = "Нет вопросов"
+        msg = "<b>Нет вопросов</b>"
         if edit:
-            await query_or_msg.edit_message_text(msg)
+            await query_or_msg.edit_message_text(msg, parse_mode="HTML")
         else:
-            await query_or_msg.reply_text(msg, reply_markup=speaker_keyboard())
+            await query_or_msg.reply_text(msg, reply_markup=speaker_keyboard(), parse_mode="HTML")
         return
 
     context.user_data["qids"] = [q.id for q in questions_list]
@@ -145,18 +145,16 @@ async def _show_questions(user_id, query_or_msg, context, edit=False):
 def _build_question_text(question, index, total):
     from_user_name = question.from_user.full_name if question.from_user else "Аноним"
     return (
-        f"Вопрос {index + 1}/{total}\n"
-        f"От: {from_user_name}\n"
+        f"── <b>Вопрос {index + 1}/{total}</b> ──\n"
+        f"👤 <b>От:</b> {from_user_name}\n\n"
         f"{question.text or '(пустой вопрос)'}"
     )
 
 
 def _build_question_keyboard(question_id):
     return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("◀️", callback_data="prev"),
-            InlineKeyboardButton("▶️", callback_data="next"),
-        ],
+        [InlineKeyboardButton("◀️ Предыдущий", callback_data="prev")],
+        [InlineKeyboardButton("Следующий ▶️", callback_data="next")],
         [InlineKeyboardButton("Ответить", callback_data=f"ans_{question_id}")],
         [InlineKeyboardButton("Пропустить", callback_data=f"skip_{question_id}")],
         [InlineKeyboardButton("Назад", callback_data="back")],
@@ -167,16 +165,16 @@ async def _display_question(query_or_msg, question, index, total, edit=False):
     text = _build_question_text(question, index, total)
     markup = _build_question_keyboard(question.id)
     if edit:
-        await query_or_msg.edit_message_text(text, reply_markup=markup)
+        await query_or_msg.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
     else:
-        await query_or_msg.reply_text(text, reply_markup=markup)
+        await query_or_msg.reply_text(text, reply_markup=markup, parse_mode="HTML")
 
 
 @callback_handler
 async def navigate(update, context, query):
 
     if "qids" not in context.user_data:
-        await query.edit_message_text("Ошибка")
+        await query.edit_message_text("<b>Ошибка</b>", parse_mode="HTML")
         return
 
     idx = context.user_data["qi"]
@@ -197,16 +195,17 @@ async def navigate(update, context, query):
 async def skip_question(update, context, query):
     qid = int(query.data.split("_")[1])
     if "qids" not in context.user_data or qid not in context.user_data["qids"]:
-        await query.edit_message_text("Вопрос уже неактивен")
+        await query.edit_message_text("<b>Вопрос уже неактивен</b>", parse_mode="HTML")
         return
 
     context.user_data["qids"].remove(qid)
     if not context.user_data["qids"]:
         await query.edit_message_text(
-            "Все вопросы обработаны",
+            "<b>Все вопросы обработаны</b>",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("Назад", callback_data="back")]
             ]),
+            parse_mode="HTML",
         )
         return
 
@@ -222,7 +221,7 @@ async def start_answer(update, context, query):
     question = await get_question(qid)
 
     if question.to_speaker_id != query.from_user.id:
-        await query.edit_message_text("Не ваш вопрос")
+        await query.edit_message_text("<b>Не ваш вопрос</b>", parse_mode="HTML")
         return
 
     context.user_data["answer_qid"] = qid
@@ -235,7 +234,7 @@ async def start_answer(update, context, query):
 async def receive_answer(update, context):
     qid = context.user_data.get("answer_qid")
     if not qid:
-        await update.message.reply_text("Ошибка")
+        await update.message.reply_text("<b>Ошибка</b>", parse_mode="HTML")
         return ConversationHandler.END
 
     question = await save_answer(qid, update.message.text)
@@ -244,15 +243,18 @@ async def receive_answer(update, context):
         await context.bot.send_message(
             chat_id=question.from_user_id,
             text=(
-                f"Спикер ответил на ваш вопрос:\n\n"
-                f"Вопрос: {question.text}\n\n"
-                f"Ответ: {update.message.text}"
+                f"<b>Спикер ответил на ваш вопрос:</b>\n\n"
+                f"<b>Вопрос:</b> {question.text}\n\n"
+                f"<b>Ответ:</b> {update.message.text}"
             ),
+            parse_mode="HTML",
         )
-        await update.message.reply_text("Ответ отправлен!")
+        await update.message.reply_text("<b>Ответ отправлен!</b>", parse_mode="HTML")
     except Exception as e:
         print(f"Ошибка отправки: {e}")
-        await update.message.reply_text("Ответ сохранен, но не отправлен")
+        await update.message.reply_text(
+            "<b>Ответ сохранен, но не отправлен</b>", parse_mode="HTML"
+        )
 
     if "qids" in context.user_data and qid in context.user_data["qids"]:
         context.user_data["qids"].remove(qid)
@@ -261,10 +263,11 @@ async def receive_answer(update, context):
 
     if not context.user_data.get("qids"):
         await update.message.reply_text(
-            "🎉 Все вопросы отвечены",
+            "<b>🎉 Все вопросы отвечены</b>",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("Назад", callback_data="back")]
             ]),
+            parse_mode="HTML",
         )
         return ConversationHandler.END
 
@@ -276,6 +279,7 @@ async def receive_answer(update, context):
     await update.message.reply_text(
         text,
         reply_markup=_build_question_keyboard(next_q.id),
+        parse_mode="HTML",
     )
 
     return ConversationHandler.END

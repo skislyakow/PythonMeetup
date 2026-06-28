@@ -10,12 +10,15 @@ from bot.handlers.organizer import organizer_handlers
 from bot.handlers.guest import guest_handlers
 from bot.handlers.speaker import speaker_handlers
 from bot.handlers.donates import donate_conv
+from bot.handlers.help import help_handlers
 from bot.models.telegram_user import TelegramUser
 
 
 def main() -> None:
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    for h in help_handlers:
+        app.add_handler(h)
     for h in guest_handlers:
         app.add_handler(h)
     for h in speaker_handlers:

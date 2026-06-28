@@ -48,16 +48,38 @@ def get_organizers():
     return list(TelegramUser.objects.filter(role="organizer"))
 
 
+_MONTH_NAMES = {
+    1: "января", 2: "февраля", 3: "марта", 4: "апреля",
+    5: "мая", 6: "июня", 7: "июля", 8: "августа",
+    9: "сентября", 10: "октября", 11: "ноября", 12: "декабря",
+}
+
+
 def format_event_line(e, *, with_status=False):
     marker = "\U0001f7e2" if e.is_active else "\U00002b1b"
-    base = f"{marker} {e.start_time.strftime('%H:%M')} — {e.speaker.full_name}: {e.title}"
+    base = f"{marker} {e.start_time.strftime('%d.%m %H:%M')} — {e.speaker.full_name}: {e.title}"
     if with_status and e.is_active:
         base += " (сейчас активен)"
     return base
 
 
-def format_schedule(events, *, with_status=False):
-    lines = ["Программа:\n"]
+def format_schedule(events):
+    if not events:
+        return "📅 <b>Программа:</b>\n\nНет предстоящих докладов."
+
+    lines = ["📅 <b>Программа:</b>\n"]
+    current_key = None
     for e in events:
-        lines.append(format_event_line(e, with_status=with_status))
+        d = e.start_time
+        key = (d.day, d.month, d.year)
+        if key != current_key:
+            current_key = key
+            lines.append(f"\n——— <b>{d.day} {_MONTH_NAMES[d.month]}</b> ———\n")
+
+        marker = "\U0001f7e2" if e.is_active else "\U00002b1b"
+        status = " <b>(сейчас)</b>" if e.is_active else ""
+        lines.append(
+            f"{marker} <b>{d.strftime('%H:%M')}</b> — {e.speaker.full_name}: {e.title}{status}"
+        )
+
     return "\n".join(lines)

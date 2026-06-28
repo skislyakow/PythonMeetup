@@ -11,6 +11,7 @@ BUTTON_BROADCAST = "📢 Рассылка"
 BUTTON_SCHEDULE_CREATE = "✏️ Создать доклад"
 BUTTON_CLOSE = "🔒 Закрыть меню"
 BUTTON_DONATE = "❤️ Поддержать проект"
+BUTTON_HELP = "ℹ️ Справка"
 
 
 def guest_keyboard(*, show_ask=True) -> ReplyKeyboardMarkup:
@@ -18,7 +19,7 @@ def guest_keyboard(*, show_ask=True) -> ReplyKeyboardMarkup:
     if show_ask:
         row.append(BUTTON_ASK)
     return ReplyKeyboardMarkup(
-        [row, [BUTTON_DONATE]],
+        [row, [BUTTON_DONATE, BUTTON_HELP]],
         resize_keyboard=True,
         input_field_placeholder="Выберите действие...",
     )
@@ -26,7 +27,7 @@ def guest_keyboard(*, show_ask=True) -> ReplyKeyboardMarkup:
 
 def speaker_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        [[BUTTON_SCHEDULE, BUTTON_SPEAKER, BUTTON_DONATE]],
+        [[BUTTON_SCHEDULE, BUTTON_SPEAKER, BUTTON_DONATE], [BUTTON_HELP]],
         resize_keyboard=True,
         input_field_placeholder="Выберите действие...",
     )
@@ -41,7 +42,7 @@ def organizer_keyboard(*, show_ask=True) -> ReplyKeyboardMarkup:
             row1,
             [BUTTON_ACTIVATE, BUTTON_BROADCAST],
             [BUTTON_SCHEDULE_CREATE],
-            [BUTTON_CLOSE],
+            [BUTTON_HELP, BUTTON_CLOSE],
         ],
         resize_keyboard=True,
     )

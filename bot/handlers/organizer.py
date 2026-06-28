@@ -22,10 +22,8 @@ from bot.services.keyboards import (
 from bot.services.user_utils import (
     get_active_speaker,
     get_all_events,
-    get_upcoming_speaker_events_count,
     set_user_role,
     format_event_line,
-    format_schedule,
 )
 
 
@@ -38,7 +36,7 @@ from telegram.ext import (
     ContextTypes,
 )
 from asgiref.sync import sync_to_async
-from datetime import datetime
+from datetime import date, datetime
 from django.utils import timezone
 
 from bot.services.auth import is_organizer
@@ -48,7 +46,7 @@ from bot.services import db_direct
 
 warnings.filterwarnings("ignore", "If 'per_message=False'")
 
-TITLE, START_TIME, END_TIME, SPEAKER, CONFIRM = range(5)
+TITLE, DATE, START_TIME, END_TIME, SPEAKER, CONFIRM = range(6)
 
 # Состояния для редактирования события
 ES_FIELD, ES_SPEAKER, ES_SAVE, ES_TEXT = range(10, 14)
@@ -102,9 +100,19 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-def parse_time(text: str) -> datetime | None:
+def parse_date(text: str) -> date | None:
+    try:
+        return datetime.strptime(text.strip(), "%d.%m.%Y").date()
+    except (ValueError, AttributeError):
+        return None
+
+
+def parse_time(text: str, target_date: date | None = None) -> datetime | None:
     try:
         hour, minute = map(int, text.split(":"))
+        if target_date:
+            dt = datetime.combine(target_date, datetime.min.time().replace(hour=hour, minute=minute))
+            return timezone.make_aware(dt)
         now = timezone.localtime()
         return now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     except (ValueError, AttributeError):
@@ -146,9 +154,7 @@ async def _deactivate_and_notify(
             text="⏸ Ваш доклад завершён. Вы теперь гость.",
             reply_markup=guest_keyboard(),
         )
-        upcoming = await get_upcoming_speaker_events_count(prev_speaker_id)
-        if not upcoming:
-            await set_user_role(prev_speaker_id, "guest")
+        await set_user_role(prev_speaker_id, "guest")
 
     if prev_event:
         users = await get_all_users()
@@ -176,7 +182,7 @@ async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _send_broadcast(update, context, text)
         return ConversationHandler.END
     await update.message.reply_text(
-        "Введите текст рассылки:", reply_markup=ReplyKeyboardRemove()
+        "<b>Введите текст рассылки:</b>", reply_markup=ReplyKeyboardRemove(), parse_mode="HTML"
     )
     return BROADCAST_TEXT
 
@@ -210,7 +216,7 @@ async def set_schedule_start(
 ):
     assert update.message is not None
     await update.message.reply_text(
-        "Название доклада?", reply_markup=ReplyKeyboardRemove()
+        "<b>Название доклада?</b>", reply_markup=ReplyKeyboardRemove(), parse_mode="HTML"
     )
     return TITLE
 
@@ -219,7 +225,21 @@ async def get_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or context.user_data is None:
         return TITLE
     context.user_data["title"] = update.message.text
-    await update.message.reply_text("Время начала? (например, 14:00)")
+    await update.message.reply_text("<b>Дата доклада? (ДД.ММ.ГГГГ)</b>", parse_mode="HTML")
+    return DATE
+
+
+async def get_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or context.user_data is None:
+        return DATE
+    event_date = parse_date(update.message.text or "")
+    if event_date is None:
+        await update.message.reply_text(
+            "<b>Неверный формат. Напиши дату так: 28.06.2025</b>", parse_mode="HTML"
+        )
+        return DATE
+    context.user_data["event_date"] = event_date
+    await update.message.reply_text("<b>Время начала? (например, 14:00)</b>", parse_mode="HTML")
     return START_TIME
 
 
@@ -227,14 +247,14 @@ async def get_start_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or context.user_data is None:
         return START_TIME
     text = (update.message.text or "").strip()
-    start_dt = parse_time(text)
+    start_dt = parse_time(text, context.user_data.get("event_date"))
     if start_dt is None:
         await update.message.reply_text(
-            "Неверный формат. Напиши время так: 14:00"
+            "<b>Неверный формат. Напиши время так: 14:00</b>", parse_mode="HTML"
         )
         return START_TIME
     context.user_data["start_time"] = start_dt
-    await update.message.reply_text("Время конца? (например, 15:00)")
+    await update.message.reply_text("<b>Время конца? (например, 15:00)</b>", parse_mode="HTML")
     return END_TIME
 
 
@@ -242,19 +262,19 @@ async def get_end_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or context.user_data is None:
         return END_TIME
     text = (update.message.text or "").strip()
-    end_dt = parse_time(text)
+    end_dt = parse_time(text, context.user_data.get("event_date"))
     if end_dt is None:
         await update.message.reply_text(
-            "Неверный формат. Напиши время так: 15:00"
+            "<b>Неверный формат. Напиши время так: 15:00</b>", parse_mode="HTML"
         )
         return END_TIME
     if end_dt <= context.user_data["start_time"]:
         await update.message.reply_text(
-            "Время конца должно быть позже начала. Попробуй ещё:"
+            "<b>Время конца должно быть позже начала. Попробуй ещё:</b>", parse_mode="HTML"
         )
         return END_TIME
     context.user_data["end_time"] = end_dt
-    await update.message.reply_text("Username спикера? (например, @ivanov)")
+    await update.message.reply_text("<b>Username спикера? (например, @ivanov)</b>", parse_mode="HTML")
     return SPEAKER
 
 
@@ -265,13 +285,15 @@ async def get_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     speaker = await find_speaker_by_username(username)
     if not speaker:
         await update.message.reply_text(
-            f"Пользователь @{username} не найден. Убедись, что он написал /start боту."
+            f"<b>Пользователь @{username} не найден. Убедись, что он написал /start боту.</b>",
+            parse_mode="HTML",
         )
         return SPEAKER
     if speaker.role != "speaker":
         speaker.role = "speaker"
         await sync_to_async(speaker.save)()
 
+    date_str = context.user_data["start_time"].strftime("%d.%m.%Y")
     start_str = context.user_data["start_time"].strftime("%H:%M")
     end_str = context.user_data["end_time"].strftime("%H:%M")
     try:
@@ -280,6 +302,7 @@ async def get_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=(
                 "🎤 Вы назначены докладчиком на Python Meetup!\n"
                 f"Тема доклада: {context.user_data['title']}\n"
+                f"Дата: {date_str}\n"
                 f"Начало: {start_str}\n"
                 f"Конец: {end_str}"
             ),
@@ -288,7 +311,9 @@ async def get_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning("Не удалось уведомить спикера %s", speaker.user_id)
     context.user_data["speaker_id"] = speaker.user_id
     title = context.user_data["title"]
-    await update.message.reply_text(f"Добавить доклад «{title}»? (да/нет)")
+    await update.message.reply_text(
+        f"<b>Добавить доклад «{title}»? (да/нет)</b>", parse_mode="HTML"
+    )
     return CONFIRM
 
 
@@ -304,18 +329,18 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["end_time"],
         )
         await update.message.reply_text(
-            "Доклад добавлен!", reply_markup=organizer_keyboard()
+            "<b>Доклад добавлен!</b>", reply_markup=organizer_keyboard(), parse_mode="HTML"
         )
         context.user_data.clear()
         return ConversationHandler.END
     elif text == "нет":
         await update.message.reply_text(
-            "Отменено.", reply_markup=organizer_keyboard()
+            "<b>Отменено.</b>", reply_markup=organizer_keyboard(), parse_mode="HTML"
         )
         context.user_data.clear()
         return ConversationHandler.END
     else:
-        await update.message.reply_text("Напиши да или нет")
+        await update.message.reply_text("<b>Напиши да или нет</b>", parse_mode="HTML")
         return CONFIRM
 
 
@@ -323,7 +348,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or context.user_data is None:
         return ConversationHandler.END
     await update.message.reply_text(
-        "Отменено.", reply_markup=organizer_keyboard()
+        "<b>Отменено.</b>", reply_markup=organizer_keyboard(), parse_mode="HTML"
     )
     context.user_data.clear()
     return ConversationHandler.END
@@ -774,6 +799,7 @@ conv_handler = ConversationHandler(
     ],
     states={
         TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_title)],
+        DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_date)],
         START_TIME: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, get_start_time)
         ],

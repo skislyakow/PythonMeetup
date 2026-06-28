@@ -68,7 +68,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await update.message.reply_text(
-        f"Привет, {user.full_name}!\n\n{status}",
+        f"Привет, {user.full_name}!\n\n{status}\n\n/help — справка по боту",
         reply_markup=markup,
     )
 
@@ -78,7 +78,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     events = await get_all_events()
-    await update.message.reply_text(format_schedule(events))
+    await update.message.reply_text(
+        format_schedule(events), parse_mode="HTML"
+    )
 
 
 # ─── Задать вопрос (Conversation) ─────────────────────
