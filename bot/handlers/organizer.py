@@ -233,6 +233,8 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Доклад добавлен!", reply_markup=organizer_keyboard()
         )
+        context.user_data.clear()
+        return ConversationHandler.END
     elif text == "нет":
         await update.message.reply_text(
             "Отменено.", reply_markup=organizer_keyboard()

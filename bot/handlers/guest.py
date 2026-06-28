@@ -177,7 +177,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 conv_handler = ConversationHandler(
     entry_points=[
-        MessageHandler(filters.Text(BUTTON_ASK), ask_question_start),
+        MessageHandler(filters.Text([BUTTON_ASK]), ask_question_start),
     ],
     states={
         TYPING_QUESTION: [
@@ -189,6 +189,6 @@ conv_handler = ConversationHandler(
 
 guest_handlers = [
     CommandHandler("start", start),
-    MessageHandler(filters.Text(BUTTON_SCHEDULE), show_schedule),
+    MessageHandler(filters.Text([BUTTON_SCHEDULE]), show_schedule),
     conv_handler,
 ]

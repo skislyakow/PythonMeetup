@@ -83,7 +83,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 donate_conv = ConversationHandler(
     entry_points=[
-        MessageHandler(filters.Text(BUTTON_DONATE), start_donate),
+        MessageHandler(filters.Text([BUTTON_DONATE]), start_donate),
     ],
     states={
         WAITING_FOR_AMOUNT: [

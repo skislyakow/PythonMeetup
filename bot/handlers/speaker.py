@@ -313,7 +313,7 @@ conv_handler = ConversationHandler(
 
 speaker_handlers = [
     CommandHandler("speaker", speaker_panel),
-    MessageHandler(filters.Text(BUTTON_SPEAKER), show_questions_from_message),
+    MessageHandler(filters.Text([BUTTON_SPEAKER]), show_questions_from_message),
     CallbackQueryHandler(events, pattern="^events$"),
     CallbackQueryHandler(questions, pattern="^questions$"),
     CallbackQueryHandler(back, pattern="^back$"),
