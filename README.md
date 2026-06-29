@@ -95,6 +95,58 @@ python manage.py runserver
 
 Открыть `http://127.0.0.1:8000/admin/`.
 
+## Деплой на VPS
+
+Автоматический деплой через `deploy_vps.py` — настраивает Python, зависимости, SQLite и systemd-сервис с автостартом.
+
+### Подготовка
+
+Заполнить в `.env`:
+- `VPS_HOST` — IP сервера
+- `VPS_USER` — SSH-пользователь (обычно `root`)
+- `VPS_PASSWORD` — SSH-пароль
+
+Создать бота через [@BotFather](https://t.me/BotFather) и получить токен.
+
+### Первый запуск
+
+```bash
+python deploy_vps.py
+```
+
+Скрипт:
+- установит Python + Git (если нет)
+- склонирует репозиторий
+- создаст виртуальное окружение
+- установит зависимости, накатит миграции, загрузит тестовые данные
+- создаст и запустит systemd-сервис
+
+После деплоя отредактировать `.env` на сервере с реальным токеном:
+
+```bash
+ssh root@<IP-сервера>
+nano /opt/pythonmeetup/.env
+systemctl restart pythonmeetup
+```
+
+### Обновление бота
+
+```bash
+python deploy_vps.py --update
+```
+
+Скрипт выполнит на сервере: `git pull` → `pip install` → `migrate` → `restart`.
+
+### Управление сервисом
+
+```bash
+ssh root@<IP-сервера>
+systemctl status pythonmeetup      # статус
+systemctl restart pythonmeetup     # перезапуск
+systemctl stop pythonmeetup        # остановка
+journalctl -u pythonmeetup -f      # логи в реальном времени
+```
+
 ## Структура проекта
 
 ```
